@@ -1,7 +1,7 @@
 import { Connection, PublicKey, LAMPORTS_PER_SOL, VersionedTransaction } from '@solana/web3.js';
 import { Request, Response } from 'express';
 import { TransactionProps, ISwapStrategy, SwapStrategyDependencies, GenerateInstructionsResult } from './swaps/base/ISwapStrategy';
-import { RaydiumSwapStrategy } from './swaps/raydium/RaydiumSwapStrategy';
+import { getSwapStrategy } from './swaps/router';
 import { generateAndCompileTransaction } from './swap';
 import dotenv from 'dotenv';
 
@@ -9,11 +9,6 @@ dotenv.config();
 
 // --- Constants & Config --- 
 const RPC_URL = process.env.RPC_URL || "https://api.mainnet-beta.solana.com";
-
-// --- Strategies --- 
-const strategies: ISwapStrategy[] = [
-    new RaydiumSwapStrategy(),
-];
 
 export async function handleSwapRequest(req: Request, res: Response): Promise<void> {
     console.log('Received swap request:', req.body);
@@ -80,21 +75,12 @@ export async function handleSwapRequest(req: Request, res: Response): Promise<vo
     };
 
     // --- Select Strategy --- 
-    let selectedStrategy: ISwapStrategy | null = null;
-    for (const strategy of strategies) {
-        try {
-            if (await strategy.canHandle(transactionDetails, strategyDeps)) {
-                selectedStrategy = strategy;
-                console.log(`Selected strategy: ${strategy.constructor.name}`);
-                break;
-            }
-        } catch (error) {
-            console.error(`Error checking strategy ${strategy.constructor.name}:`, error);
-        }
-    }
-
-    if (!selectedStrategy) {
-        console.error('No suitable swap strategy found for the request.');
+    let selectedStrategy: ISwapStrategy;
+    try {
+        selectedStrategy = await getSwapStrategy(transactionDetails, strategyDeps);
+        console.log(`Selected strategy: ${selectedStrategy.constructor.name}`);
+    } catch (err) {
+        console.error('No suitable swap strategy found for the request.', err);
         res.status(400).json({ success: false, error: 'No suitable swap strategy found.' });
         return;
     }
