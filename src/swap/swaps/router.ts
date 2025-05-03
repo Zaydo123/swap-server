@@ -91,22 +91,12 @@ export async function getSwapStrategy(
              const placeholderPubKey = new PublicKey('11111111111111111111111111111111'); 
             if (StrategyClass === RaydiumLaunchLabSwapStrategy) {
                  // Constructor: connection, wallet, poolId
-                 return new StrategyClass(dependencies.connection, dependencies.wallet, placeholderPubKey);
-             } else if (StrategyClass === RaydiumSwapStrategy) {
-                  // Constructor: connection, wallet
                  return new StrategyClass(dependencies.connection, dependencies.wallet);
-             } else if (StrategyClass === PumpFunBondingCurveSwapStrategy) {
-                  // Constructor: connection, wallet
-                 return new StrategyClass(dependencies.connection, dependencies.wallet);
-             } else if (StrategyClass === MoonshotSwapStrategy) {
-                 // Constructor: connection, wallet
-                 return new StrategyClass(dependencies.connection, dependencies.wallet);
-             } else if (StrategyClass === PumpSwapStrategy) {
-                 // Constructor: connection, wallet
-                 return new StrategyClass(dependencies.connection, dependencies.wallet);
+             } else if (StrategyClass === RaydiumSwapStrategy || StrategyClass === PumpFunBondingCurveSwapStrategy || StrategyClass === MoonshotSwapStrategy || StrategyClass === PumpSwapStrategy) {
+                 return new StrategyClass();
+             } else{
+                throw new Error(`Unhandled strategy type during temp instantiation: ${StrategyClass.name}`);
              }
-             // Should not happen if all strategies are covered
-            throw new Error(`Unhandled strategy type during temp instantiation: ${StrategyClass.name}`);
         } catch (e) {
             console.warn(`Failed to create temporary instance for ${StrategyClass.name}:`, e);
             return null; 
@@ -138,10 +128,8 @@ export async function getSwapStrategy(
                       return new SelectedStrategyClass(dependencies.connection, dependencies.wallet);
                  } else if (SelectedStrategyClass === PumpFunBondingCurveSwapStrategy) {
                       return new SelectedStrategyClass(dependencies.connection, dependencies.wallet);
-                 } else if (SelectedStrategyClass === MoonshotSwapStrategy) {
-                     return new SelectedStrategyClass(dependencies.connection, dependencies.wallet);
-                 } else if (SelectedStrategyClass === PumpSwapStrategy) {
-                     return new SelectedStrategyClass(dependencies.connection, dependencies.wallet);
+                 } else if (SelectedStrategyClass === MoonshotSwapStrategy || SelectedStrategyClass === PumpSwapStrategy) {
+                     return new SelectedStrategyClass();
                  } else {
                      // Should not happen if all strategies are covered
                       throw new Error(`Unhandled strategy type during final instantiation: ${SelectedStrategyClass.name}`);

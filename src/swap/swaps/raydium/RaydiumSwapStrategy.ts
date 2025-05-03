@@ -1,6 +1,6 @@
-import { TransactionProps } from '../../swap'; // Adjust path
+import { TransactionProps } from '../../swap';
 import { ISwapStrategy, GenerateInstructionsResult, SwapStrategyDependencies } from '../base/ISwapStrategy';
-import { RaydiumSwap } from '../../raydium-generator'; // Adjust path
+import { RaydiumSwap } from '../../../raydium-generator';
 import { VersionedTransaction } from '@solana/web3.js';
 import { Raydium } from '@raydium-io/raydium-sdk-v2';
 import { NATIVE_MINT } from '@solana/spl-token';
@@ -9,7 +9,6 @@ import { ensureUserTokenAccounts } from '../utils/ensureTokenAccounts';
 
 // Define the cutoff timestamp for using Raydium for older Pump tokens
 const PUMP_FUN_RAYDIUM_CUTOFF_TIMESTAMP = 1742234121000;
-
 
 export class RaydiumSwapStrategy implements ISwapStrategy {
 
@@ -117,7 +116,7 @@ export class RaydiumSwapStrategy implements ISwapStrategy {
 
         const raydiumSwap = new RaydiumSwap(
             heliusRpcUrl,
-            transactionDetails.secret
+            transactionDetails.secret ?? ''
         );
 
         console.log('Calling RaydiumSwap.getSwapTransaction with:', {
