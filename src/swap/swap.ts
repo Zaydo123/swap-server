@@ -47,7 +47,7 @@ export async function generateAndCompileTransaction(
   swapInstructions: TransactionInstruction[], // Should include ALL setup and swap instructions
   lookupTables: AddressLookupTableAccount[] = [], // Passed from strategy result
   recentBlockhash: string,
-  priorityFee: number = 0, // Passed explicitly
+  priorityFee: number = 0, // Value in microLamports (already converted from SOL)
   feeLamports: number = 0 // Passed explicitly (Sendy Fee)
 ): Promise<ConsolidatedSwapResult> {
 
@@ -56,7 +56,8 @@ export async function generateAndCompileTransaction(
   // --- 1. Compute Budget Instructions (Add if needed) --- //
   // If strategy did not include compute budget, add it here
   if (priorityFee > 0) {
-    const microLamports = Math.ceil(priorityFee * 1_000_000);
+    // priorityFee is already in microLamports
+    const microLamports = Math.ceil(priorityFee);
     if (microLamports > 0) {
         console.log(`Prepending compute unit price IX: ${microLamports} microLamports`);
         allInstructions.push(ComputeBudgetProgram.setComputeUnitPrice({ microLamports }));

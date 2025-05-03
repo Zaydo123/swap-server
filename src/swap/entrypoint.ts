@@ -113,7 +113,7 @@ export async function handleSwapRequest(req: Request, res: Response): Promise<vo
                 instructionResult.instructions, 
                 instructionResult.addressLookupTables || [], 
                 recentBlockhash,
-                priorityFeeMicroLamports, // Ensure this is in micro-lamports
+                priorityFeeMicroLamports, // Value is already in microLamports, do not convert again
                 feeLamports
             );
 

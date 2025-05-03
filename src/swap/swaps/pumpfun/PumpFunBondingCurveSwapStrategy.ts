@@ -5,8 +5,8 @@ import { ISwapStrategy, SwapStrategyDependencies, TransactionProps, GenerateInst
 import * as CNST from '../../constants'; // Adjust path
 import { Buffer } from 'buffer';
 import { prepareTokenAccounts, addWsolUnwrapInstructionIfNeeded } from '../../../utils/tokenAccounts';
-import { makeSendyFeeInstruction } from '../../../utils/feeUtils';
-import { FEE_RECIPIENT } from '../../constants';
+import { calculateSendyFee, makeSendyFeeInstruction } from '../../../utils/feeUtils';
+import { FEE_RECIPIENT, SENDY_FEE_ACCOUNT } from '../../constants';
 
 // Helper from original swap.ts - move to utils later?
 function bufferFromUInt64(value: number | string) {
@@ -115,7 +115,13 @@ export class PumpFunBondingCurveSwapStrategy implements ISwapStrategy {
 
         // Ensure the user has ATAs for input and output mints using shared utility
         const preparatoryInstructions: TransactionInstruction[] = [];
-        const mintsToEnsure = Array.from(new Set([tokenAddress, NATIVE_MINT].map((m) => m.toString()))).map((s) => new PublicKey(s));
+        // Ensure ATAs for (1) the input mint, (2) WSOL (native), and (3) the actual pump token mint (needed for BUY)
+        const mintsToEnsure = Array.from(new Set([
+            tokenAddress,
+            NATIVE_MINT,
+            // Always include pumpTokenMintAddress so that BUY transactions have the user's ATA ready
+            type === 'buy' ? new PublicKey(outputMint) : new PublicKey(inputMint),
+        ].map((m) => m.toString()))).map((s) => new PublicKey(s));
         await prepareTokenAccounts({
             connection,
             userPublicKey: payer,
@@ -183,13 +189,41 @@ export class PumpFunBondingCurveSwapStrategy implements ISwapStrategy {
         }
         // --- End Fetch Decimals ---
 
-        const BONDING_CURVE = new PublicKey(data.bonding_curve);
-        const ASSOCIATED_BONDING_CURVE = new PublicKey(data.associated_bonding_curve);
+        // Determine the actual pump.fun token mint address based on swap type
+        const pumpTokenMintAddress = type === 'buy' ? new PublicKey(outputMint) : new PublicKey(inputMint);
+
         const tokenDecimalMultiplier = 10 ** decimals;
 
+        // Derive the bonding curve PDA instead of trusting the API
+        const bondingCurveSeeds = [Buffer.from('bonding-curve'), pumpTokenMintAddress.toBuffer()];
+        const [derivedBondingCurve,] = PublicKey.findProgramAddressSync(bondingCurveSeeds, CNST.PUMP_FUN_PROGRAM);
+
+        // Validate against API data (optional but recommended)
+        if (data.bonding_curve && derivedBondingCurve.toBase58() !== data.bonding_curve) {
+            console.warn(`Derived bonding curve PDA ${derivedBondingCurve.toBase58()} does not match API bonding curve ${data.bonding_curve} for token ${pumpTokenMintAddress.toBase58()}. Using derived PDA.`);
+        }
+
+        const BONDING_CURVE = derivedBondingCurve; // Use the derived address
+
+        // Derive the associated bonding curve address (Token Account owned by bonding curve)
+        const assocBondingCurveSeeds = [
+            BONDING_CURVE.toBuffer(),
+            TOKEN_PROGRAM_ID.toBuffer(),
+            pumpTokenMintAddress.toBuffer(),
+        ];
+        const [derivedAssocBondingCurve,] = PublicKey.findProgramAddressSync(assocBondingCurveSeeds, ASSOCIATED_TOKEN_PROGRAM_ID);
+
+        // Validate against API data (optional but recommended)
+        if (data.associated_bonding_curve && derivedAssocBondingCurve.toBase58() !== data.associated_bonding_curve) {
+            console.warn(`Derived associated bonding curve PDA ${derivedAssocBondingCurve.toBase58()} does not match API value ${data.associated_bonding_curve} for token ${pumpTokenMintAddress.toBase58()}. Using derived PDA.`);
+        }
+
+        const ASSOCIATED_BONDING_CURVE = derivedAssocBondingCurve; // Use the derived address
+
         // Get user's ATA - Pump requires allowOwnerOffCurve = true
+        // This ATA is for the PUMP token
         const userAssociatedTokenAccount = await getAssociatedTokenAddress(
-            tokenAddress,
+            pumpTokenMintAddress,
             payer,
             true // allowOwnerOffCurve = true for pump bonding curve
         );
@@ -205,11 +239,12 @@ export class PumpFunBondingCurveSwapStrategy implements ISwapStrategy {
         let sendyFeeLamports: bigint = 0n;
         if (type === 'buy') {
             const baseSolInput = BigInt(Math.floor(Number(amount) * LAMPORTS_PER_SOL));
+            // Use exact slippage as provided by the user (in basis points)
             solAmountLamports = baseSolInput + (baseSolInput * BigInt(slippageBps)) / 10000n;
             if (virtualSolReserves === 0n) throw new Error("Pump virtual SOL reserves are zero.");
             tokenAmountRaw = (virtualTokenReserves * baseSolInput) / (virtualSolReserves + baseSolInput);
             sendyFeeLamports = solAmountLamports / 100n; // 1% fee on max SOL input
-            console.log('Pump Buy (SOL input): ', { maxSolIn: solAmountLamports, minTokenOut: tokenAmountRaw, fee: sendyFeeLamports });
+            console.log('Pump Buy (SOL input): ', { maxSolIn: solAmountLamports, minTokenOut: tokenAmountRaw, fee: sendyFeeLamports, slippageBps });
         } else { // Sell
             // Input is token amount
             tokenAmountRaw = BigInt(Math.floor(Number(amount) * Number(tokenDecimalMultiplier)));
@@ -226,7 +261,7 @@ export class PumpFunBondingCurveSwapStrategy implements ISwapStrategy {
                 solAmountLamports = expectedSolOutput - (expectedSolOutput * BigInt(slippageBps)) / 10000n; // Subtract slippage %
             }
             sendyFeeLamports = solAmountLamports / 100n; // 1% fee on min SOL output
-            console.log('Pump Sell (Token input): ', { tokenIn: tokenAmountRaw, minSolOut: solAmountLamports, fee: sendyFeeLamports });
+            console.log('Pump Sell (Token input): ', { tokenIn: tokenAmountRaw, minSolOut: solAmountLamports, fee: sendyFeeLamports, slippageBps });
         }
 
         // Ensure amounts are non-negative
@@ -246,7 +281,7 @@ export class PumpFunBondingCurveSwapStrategy implements ISwapStrategy {
         const buyKeys = [
             { pubkey: CNST.GLOBAL, isSigner: false, isWritable: false },
             { pubkey: CNST.FEE_RECIPIENT, isSigner: false, isWritable: true },
-            { pubkey: tokenAddress, isSigner: false, isWritable: false },
+            { pubkey: pumpTokenMintAddress, isSigner: false, isWritable: false },
             { pubkey: BONDING_CURVE, isSigner: false, isWritable: true },
             { pubkey: ASSOCIATED_BONDING_CURVE, isSigner: false, isWritable: true },
             { pubkey: userAssociatedTokenAccount, isSigner: false, isWritable: true },
@@ -260,7 +295,7 @@ export class PumpFunBondingCurveSwapStrategy implements ISwapStrategy {
         const sellKeys = [
              { pubkey: CNST.GLOBAL, isSigner: false, isWritable: false },
              { pubkey: CNST.FEE_RECIPIENT, isSigner: false, isWritable: true },
-             { pubkey: tokenAddress, isSigner: false, isWritable: false },
+             { pubkey: pumpTokenMintAddress, isSigner: false, isWritable: false },
              { pubkey: BONDING_CURVE, isSigner: false, isWritable: true },
              { pubkey: ASSOCIATED_BONDING_CURVE, isSigner: false, isWritable: true },
              { pubkey: userAssociatedTokenAccount, isSigner: false, isWritable: true },
@@ -283,7 +318,7 @@ export class PumpFunBondingCurveSwapStrategy implements ISwapStrategy {
         if (sendyFeeLamports > 0n) {
             feeInstruction = makeSendyFeeInstruction({
                 from: payer,
-                to: FEE_RECIPIENT,
+                to: SENDY_FEE_ACCOUNT,
                 lamports: Number(sendyFeeLamports),
             });
         }
@@ -297,7 +332,7 @@ export class PumpFunBondingCurveSwapStrategy implements ISwapStrategy {
 
         // Add WSOL unwrap instruction if needed (shared utility)
         await addWsolUnwrapInstructionIfNeeded({
-            outputMint: tokenAddress.toBase58(),
+            outputMint: outputMint, // Use the actual output mint from params
             userPublicKey: payer,
             instructions: allInstructions
         });

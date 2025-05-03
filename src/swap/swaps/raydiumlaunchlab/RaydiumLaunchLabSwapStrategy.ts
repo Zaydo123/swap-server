@@ -20,7 +20,7 @@ import Decimal from "decimal.js";
 import { NATIVE_MINT } from "@solana/spl-token"; // Correct import
 import { prepareTokenAccounts } from '../../../utils/tokenAccounts';
 import { calculateSendyFee, makeSendyFeeInstruction } from '../../../utils/feeUtils';
-import { FEE_RECIPIENT } from '../../constants';
+import { FEE_RECIPIENT, SENDY_FEE_ACCOUNT } from '../../constants';
 import { ensureUserTokenAccounts } from '../utils/ensureTokenAccounts';
 import { LaunchpadPool } from '@raydium-io/raydium-sdk-v2';
 
@@ -280,7 +280,7 @@ export class RaydiumLaunchLabSwapStrategy implements ISwapStrategy {
       if (feeAmt > 0n) {
         feeInstruction = makeSendyFeeInstruction({
           from: new PublicKey(swapData.params.userWalletAddress),
-          to: FEE_RECIPIENT,
+          to: SENDY_FEE_ACCOUNT,
           lamports: Number(feeAmt),
         });
       }

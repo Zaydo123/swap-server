@@ -6,7 +6,7 @@ import { NATIVE_MINT } from '@solana/spl-token';
 import { prepareTokenAccounts } from '../../../utils/tokenAccounts';
 import { calculateSendyFee, makeSendyFeeInstruction } from '../../../utils/feeUtils';
 import { addWsolUnwrapInstructionIfNeeded } from '../../../utils/tokenAccounts';
-import { FEE_RECIPIENT } from '../../constants';
+import { FEE_RECIPIENT, SENDY_FEE_ACCOUNT } from '../../constants';
 
 export class MoonshotSwapStrategy implements ISwapStrategy {
     // Note: Moonshot SDK instance is created within generateSwapInstructions now
@@ -165,7 +165,7 @@ export class MoonshotSwapStrategy implements ISwapStrategy {
         if (sendyFeeLamports > 0n) {
             feeInstruction = makeSendyFeeInstruction({
                 from: new PublicKey(transactionDetails.params.userWalletAddress),
-                to: FEE_RECIPIENT,
+                to: SENDY_FEE_ACCOUNT,
                 lamports: Number(sendyFeeLamports),
             });
         }

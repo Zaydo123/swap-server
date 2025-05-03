@@ -96,11 +96,58 @@ export class PumpSwapStrategy implements ISwapStrategy {
         console.log('--- Generating PumpSwap Swap Instructions using Direct Transaction Building ---');
         const { connection } = dependencies;
         const { type, amount, slippageBps, userWalletAddress, inputMint, outputMint } = transactionDetails.params;
-
-        // Ensure the user has ATAs for input and output mints
+        
+        // Initialize variables
         const preparatoryInstructions: TransactionInstruction[] = [];
-        const mintsToEnsure = Array.from(new Set([inputMint, outputMint]))
-            .map((s) => new PublicKey(s));
+        let poolData: any;
+        let apiQuoteMint: string = "So11111111111111111111111111111111111111112"; // default to WSOL
+        
+        // Determine the actual pump token mint address based on swap type
+        const tokenMint = type === 'buy' ? outputMint : inputMint;
+        
+        // Fetch pool data for decimals and reserves
+        try {
+            // Use tokenMint instead of inputMint for the API call
+            const pumpswapPoolURL = `https://swap-api.pump.fun/v1/pools/pump-pool?base=${tokenMint}`;
+            const response = await fetch(pumpswapPoolURL);
+            if (!response.ok) {
+                // If the primary lookup fails, we cannot proceed as we need pool data
+                throw new Error(`Failed to fetch required pool data for ${tokenMint}. Status: ${response.status}`);
+            }
+            poolData = await response.json();
+            console.log('Successfully fetched pool data via base mint lookup.');
+            
+            if (!poolData || poolData.baseMintDecimals == null || poolData.quoteMintDecimals == null ||
+                poolData.baseReserves == null || poolData.quoteReserves == null) {
+                throw new Error("Incomplete pool data (missing decimals or reserves)");
+            }
+            if (poolData.quoteMint) {
+                apiQuoteMint = poolData.quoteMint;
+            }
+        } catch (error) {
+            console.error("Error fetching pool data:", error);
+            throw new Error(`Could not fetch pool data for ${tokenMint}: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        
+        // Use the pool data to get mints
+        const baseMint = new PublicKey(poolData.baseMint);
+        const quoteMint = new PublicKey(poolData.quoteMint);
+        const pool = new PublicKey(poolData.address);
+        
+        // Log the API's pool address for confirmation
+        if (poolData.address) {
+            console.log("API pool address:", poolData.address);
+        }
+        
+        const userPublicKey = new PublicKey(userWalletAddress);
+        
+        const baseDecimals = poolData.baseMintDecimals;
+        const quoteDecimals = poolData.quoteMintDecimals; // Should be 9 for SOL
+        const baseReserves = BigInt(String(poolData.baseReserves));
+        const quoteReserves = BigInt(String(poolData.quoteReserves));
+
+        // Ensure user has token accounts for both baseMint and quoteMint
+        const mintsToEnsure = [baseMint, quoteMint];
         await ensureUserTokenAccounts({
             connection,
             userPublicKey: new PublicKey(userWalletAddress),
@@ -109,9 +156,9 @@ export class PumpSwapStrategy implements ISwapStrategy {
         });
 
         // --- WRAP SOL IF NEEDED (for buy with SOL) ---
-        if (type === 'buy' && inputMint === "So11111111111111111111111111111111111111112") {
+        if (type === 'buy') {
             const userQuoteTokenAccount = getAssociatedTokenAddressSync(
-                new PublicKey("So11111111111111111111111111111111111111112"),
+                quoteMint,
                 new PublicKey(userWalletAddress)
             );
             const solAmountIn = BigInt(Math.floor(Number(amount) * Number(LAMPORTS_PER_SOL)));
@@ -144,9 +191,9 @@ export class PumpSwapStrategy implements ISwapStrategy {
         }
 
         // --- ENSURE WSOL ATA EXISTS FOR SELL (for receiving SOL as WSOL) ---
-        if (type === 'sell' && outputMint === "So11111111111111111111111111111111111111112") {
+        if (type === 'sell') {
             const userWSOLAccount = getAssociatedTokenAddressSync(
-                NATIVE_MINT,
+                quoteMint,
                 new PublicKey(userWalletAddress)
             );
             const wsolAccountInfo = await connection.getAccountInfo(userWSOLAccount);
@@ -158,7 +205,7 @@ export class PumpSwapStrategy implements ISwapStrategy {
                         new PublicKey(userWalletAddress),
                         userWSOLAccount,
                         new PublicKey(userWalletAddress),
-                        NATIVE_MINT
+                        quoteMint
                     )
                 );
                 preparatoryInstructions.push(
@@ -179,46 +226,6 @@ export class PumpSwapStrategy implements ISwapStrategy {
             }
         }
 
-        // Fetch pool data for decimals and reserves
-        let poolData: any;
-        let apiQuoteMint: string = "So11111111111111111111111111111111111111112"; // default to WSOL
-        try {
-            const pumpswapPoolURL = `https://swap-api.pump.fun/v1/pools/pump-pool?base=${inputMint}`;
-            const response = await fetch(pumpswapPoolURL);
-            if (!response.ok) {
-                // If the primary lookup fails, we cannot proceed as we need pool data
-                throw new Error(`Failed to fetch required pool data for ${inputMint}. Status: ${response.status}`);
-            }
-            poolData = await response.json();
-            console.log('Successfully fetched pool data via base mint lookup.');
-            
-            if (!poolData || poolData.baseMintDecimals == null || poolData.quoteMintDecimals == null ||
-                poolData.baseReserves == null || poolData.quoteReserves == null) {
-                throw new Error("Incomplete pool data (missing decimals or reserves)");
-            }
-            if (poolData.quoteMint) {
-                apiQuoteMint = poolData.quoteMint;
-            }
-        } catch (error) {
-            console.error("Error fetching pool data:", error);
-            throw new Error(`Could not fetch pool data for ${inputMint}: ${error instanceof Error ? error.message : String(error)}`);
-        }
-
-        // Use the pool PDA/address from the API response
-        const baseMint = new PublicKey(inputMint);
-        const quoteMint = new PublicKey(apiQuoteMint);
-        const pool = new PublicKey(poolData.address);
-        // Log the API's pool address for confirmation
-        if (poolData.address) {
-            console.log("API pool address:", poolData.address);
-        }
-        const userPublicKey = new PublicKey(userWalletAddress);
-
-        const baseDecimals = poolData.baseMintDecimals;
-        const quoteDecimals = poolData.quoteMintDecimals; // Should be 9 for SOL
-        const baseReserves = BigInt(String(poolData.baseReserves));
-        const quoteReserves = BigInt(String(poolData.quoteReserves));
-
         let tokenAmount: bigint = 0n;
         let solAmount: bigint = 0n;
         let sendyFeeLamports: bigint = 0n;
@@ -226,62 +233,35 @@ export class PumpSwapStrategy implements ISwapStrategy {
         // Convert slippage from basis points to percentage
         const slippagePercentage = Number(slippageBps) / 100;
 
+        // In PumpSwap, baseMint is always the token and quoteMint is always SOL
         if (type === 'buy') {
-            // Buying token with SOL
-            if (inputMint === "So11111111111111111111111111111111111111112") {
-                // Input: SOL amount. Calculate min token out.
-                const solAmountIn = BigInt(typeof amount === 'string' ? Math.floor(Number(amount) * Number(LAMPORTS_PER_SOL)) : Math.floor(Number(amount) * Number(LAMPORTS_PER_SOL)));
-                
-                // Calculate expected token out using constant product formula
-                if (quoteReserves === 0n || baseReserves === 0n) {
-                    throw new Error("Pool has zero reserves");
-                }
-                
-                const k = baseReserves * quoteReserves;
-                const newQuoteReserves = quoteReserves + solAmountIn;
-                const newBaseReserves = k / newQuoteReserves;
-                const baseAmountOut = baseReserves - newBaseReserves;
-                
-                // Apply slippage tolerance
-                const minBaseAmountOut = baseAmountOut - (baseAmountOut * BigInt(Math.floor(slippagePercentage * 100))) / 10000n;
-                
-                // Set values for transaction
-                tokenAmount = minBaseAmountOut;
-                solAmount = solAmountIn;
-                
-                // Calculate Sendy fee (1% of SOL input)
-                sendyFeeLamports = solAmountIn / 100n;
-                
-                console.log(`PumpSwap Buy (SOL Input): SOL In = ${solAmountIn}, Min Token Out = ${minBaseAmountOut}, Fee = ${sendyFeeLamports}`);
-            } else {
-                // Input: Token amount. Calculate max SOL in.
-                const baseAmountOut = BigInt(Math.floor(Number(amount) * Math.pow(10, Number(baseDecimals))));
-                
-                // Ensure amount doesn't exceed pool reserves
-                if (baseAmountOut >= baseReserves) {
-                    throw new Error("Desired token amount exceeds pool reserves");
-                }
-                
-                // Calculate expected SOL in using constant product formula
-                const k = baseReserves * quoteReserves;
-                const newBaseReserves = baseReserves - baseAmountOut;
-                const newQuoteReserves = k / newBaseReserves;
-                const quoteAmountIn = newQuoteReserves - quoteReserves;
-                
-                // Apply slippage tolerance
-                const maxQuoteAmountIn = quoteAmountIn + (quoteAmountIn * BigInt(Math.floor(slippagePercentage * 100))) / 10000n;
-                
-                // Set values for transaction
-                tokenAmount = baseAmountOut;
-                solAmount = maxQuoteAmountIn;
-                
-                // Calculate Sendy fee (1% of max SOL input)
-                sendyFeeLamports = maxQuoteAmountIn / 100n;
-                
-                console.log(`PumpSwap Buy (Token Output): Max SOL In = ${maxQuoteAmountIn}, Token Out = ${baseAmountOut}, Fee = ${sendyFeeLamports}`);
+            // Buying baseMint (token) with quoteMint (SOL)
+            // Input: SOL amount (quoteMint). Calculate min token out (baseMint).
+            const solAmountIn = BigInt(typeof amount === 'string' ? Math.floor(Number(amount) * Number(LAMPORTS_PER_SOL)) : Math.floor(Number(amount) * Number(LAMPORTS_PER_SOL)));
+            
+            // Calculate expected token out using constant product formula
+            if (quoteReserves === 0n || baseReserves === 0n) {
+                throw new Error("Pool has zero reserves");
             }
+            
+            const k = baseReserves * quoteReserves;
+            const newQuoteReserves = quoteReserves + solAmountIn;
+            const newBaseReserves = k / newQuoteReserves;
+            const baseAmountOut = baseReserves - newBaseReserves;
+            
+            // Apply slippage tolerance
+            const minBaseAmountOut = baseAmountOut - (baseAmountOut * BigInt(Math.floor(slippagePercentage * 100))) / 10000n;
+            
+            // Set values for transaction
+            tokenAmount = minBaseAmountOut;
+            solAmount = solAmountIn;
+            
+            // Calculate Sendy fee (1% of SOL input)
+            sendyFeeLamports = solAmountIn / 100n;
+            
+            console.log(`PumpSwap Buy (SOL Input): SOL In = ${solAmountIn}, Min Token Out = ${minBaseAmountOut}, Fee = ${sendyFeeLamports}`);
         } else if (type === 'sell') {
-            // Selling token for SOL
+            // Selling baseMint (token) for quoteMint (SOL)
             const baseAmountIn = BigInt(Math.floor(Number(amount) * Math.pow(10, Number(baseDecimals))));
             
             // Calculate expected SOL out using constant product formula
@@ -317,13 +297,13 @@ export class PumpSwapStrategy implements ISwapStrategy {
         
         // Get pool token accounts using standard ATA derivation (like in pumpswap.ts)
         const poolBaseTokenAccount = getAssociatedTokenAddressSync(
-            baseMint, // Mint
+            baseMint, // Token mint (base)
             pool,     // Owner (the pool address)
             true      // Allow owner off-curve (required for PDAs/Contracts as owners)
         );
         
         const poolQuoteTokenAccount = getAssociatedTokenAddressSync(
-            quoteMint, // Mint (NATIVE_MINT)
+            quoteMint, // SOL mint (quote)
             pool,      // Owner (the pool address)
             true       // Allow owner off-curve
         );

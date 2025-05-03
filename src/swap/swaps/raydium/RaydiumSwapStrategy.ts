@@ -22,7 +22,7 @@ import BN from 'bn.js';
 import Decimal from 'decimal.js';
 import { NATIVE_MINT, getAssociatedTokenAddress, createCloseAccountInstruction } from '@solana/spl-token'; // For SOL handling
 import { TransactionProps, GenerateInstructionsResult, SwapStrategyDependencies, ISwapStrategy } from '../base/ISwapStrategy';
-import { FEE_RECIPIENT } from '../../constants';
+import { FEE_RECIPIENT, SENDY_FEE_ACCOUNT } from '../../constants';
 import { prepareTokenAccounts } from '../../../utils/tokenAccounts';
 import { calculateSendyFee, makeSendyFeeInstruction } from '../../../utils/feeUtils';
 import { addWsolUnwrapInstructionIfNeeded } from '../../../utils/tokenAccounts';
@@ -229,7 +229,7 @@ export class RaydiumSwapStrategy implements ISwapStrategy {
             if (sendyFeeLamports > 0) {
                 feeInstruction = makeSendyFeeInstruction({
                     from: userPublicKey,
-                    to: FEE_RECIPIENT,
+                    to: SENDY_FEE_ACCOUNT,
                     lamports: sendyFeeLamports,
                 });
             }
