@@ -59,12 +59,13 @@ export class RaydiumLaunchLabSwapStrategy implements ISwapStrategy {
 
   async canHandle(swapData: TransactionProps, dependencies: SwapStrategyDependencies): Promise<boolean> {
     try {
-      const mintAddressStr = swapData.params.inputMint;
-      if (mintAddressStr.toLowerCase().endsWith('pump') || mintAddressStr.toLowerCase().endsWith('moon')) {
+      const { inputMint, outputMint, type } = swapData.params;
+      const tokenMint = type === 'buy' ? outputMint : inputMint;
+      if (tokenMint.toString().toLowerCase().endsWith('pump') || tokenMint.toString().toLowerCase().endsWith('moon')) {
         return false;
       }
       // Check Raydium Launchpad API for bonding status
-      const apiUrl = `https://launch-mint-v1.raydium.io/get/by/mints?ids=${mintAddressStr}`;
+      const apiUrl = `https://launch-mint-v1.raydium.io/get/by/mints?ids=${tokenMint.toString()}`;
       try {
         const response = await fetch(apiUrl);
         if (!response.ok) return false;

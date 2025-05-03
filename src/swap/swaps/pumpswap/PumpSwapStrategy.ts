@@ -57,12 +57,12 @@ export class PumpSwapStrategy implements ISwapStrategy {
         transactionDetails: TransactionProps,
         dependencies: SwapStrategyDependencies
     ): Promise<boolean> {
-        const mintAddress = transactionDetails.params.inputMint;
-        // Removed poolAddress as it's not reliably useful for canHandle if the main API fails
+        const { inputMint, outputMint, type } = transactionDetails.params;
+        const tokenMint = type === 'buy' ? outputMint : inputMint;
         
         try {
             // Check the main PumpSwap API endpoint. We NEED data from this endpoint to generate instructions.
-            const pumpswapCheckURL = `https://swap-api.pump.fun/v1/pools/pump-pool?base=${mintAddress}`;
+            const pumpswapCheckURL = `https://swap-api.pump.fun/v1/pools/pump-pool?base=${tokenMint}`;
             console.log("Checking PumpSwapStrategy eligibility via API:", pumpswapCheckURL);
             const pumpswapResponse = await fetch(pumpswapCheckURL);
     
@@ -70,20 +70,20 @@ export class PumpSwapStrategy implements ISwapStrategy {
                 const data = await pumpswapResponse.json();
                 // Ensure the response contains the necessary pool address for swapping
                 if (data && data.address) {
-                    console.log(`PumpSwapStrategy CAN handle token ${mintAddress} via pool ${data.address}`);
+                    console.log(`PumpSwapStrategy CAN handle token ${tokenMint} via pool ${data.address}`);
                     return true;
                 } else {
-                    console.log(`PumpSwapStrategy API response OK but missing address for ${mintAddress}, cannot handle.`);
+                    console.log(`PumpSwapStrategy API response OK but missing address for ${tokenMint}, cannot handle.`);
                     return false; // Cannot proceed without pool address from API
                 }
             } else {
                 // If the API check fails (404 or other error), this strategy cannot handle it,
                 // as generateSwapInstructions relies on data from this endpoint.
-                console.log(`PumpSwapStrategy cannot handle: API check failed (${pumpswapResponse.status}) for ${mintAddress}.`);
+                console.log(`PumpSwapStrategy cannot handle: API check failed (${pumpswapResponse.status}) for ${tokenMint}.`);
                 return false;
             }
         } catch (error) {
-            console.error(`Error during PumpSwapStrategy eligibility check for ${mintAddress}:`, error);
+            console.error(`Error during PumpSwapStrategy eligibility check for ${tokenMint}:`, error);
             return false; // Network errors, etc., mean we can't confirm eligibility
         }
         // Removed the overly optimistic fallback logic

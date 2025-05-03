@@ -30,17 +30,18 @@ export class PumpFunBondingCurveSwapStrategy implements ISwapStrategy {
         transactionDetails: TransactionProps,
         dependencies: SwapStrategyDependencies
     ): Promise<boolean> {
-        const mintAddress = transactionDetails.params.inputMint;
+        const { inputMint, outputMint, type } = transactionDetails.params;
+        const tokenMint = type === 'buy' ? outputMint : inputMint;
         // This strategy only handles pump tokens
         // EndsWith check removed as router might handle non-pump tokens first
 
         try {
-            console.log("Checking PumpFunBondingCurveStrategy eligibility for:", mintAddress);
+            console.log("Checking PumpFunBondingCurveStrategy eligibility for:", tokenMint);
 
             // Fetch necessary data using helper (assuming router pre-caches)
             // Use helper functions defined in router.ts context or pass cache/fetchers via dependencies
             // For now, directly fetch here, but caching in router is better
-            const pumpswapCheckURL = `https://swap-api.pump.fun/v1/pools/pump-pool?base=${mintAddress}`;
+            const pumpswapCheckURL = `https://swap-api.pump.fun/v1/pools/pump-pool?base=${tokenMint}`;
             const pumpswapResponse = await fetch(pumpswapCheckURL);
 
             // 1. Check if bonded to pumpswap (if so, this strategy is NOT applicable)
@@ -53,7 +54,7 @@ export class PumpFunBondingCurveSwapStrategy implements ISwapStrategy {
             }
 
             // 2. Fetch pump.fun coin data
-            const dataURL = `https://frontend-api-v3.pump.fun/coins/${mintAddress}`;
+            const dataURL = `https://frontend-api-v3.pump.fun/coins/${tokenMint}`;
             const response = await fetch(dataURL);
             if (!response.ok) {
                  console.error(`Failed to fetch pump.fun coin data for eligibility check (${response.status})`);
@@ -65,13 +66,13 @@ export class PumpFunBondingCurveSwapStrategy implements ISwapStrategy {
             try {
                 data = await response.json();
             } catch (parseError) {
-                console.error(`Error parsing JSON from pump.fun API for ${mintAddress}:`, parseError);
+                console.error(`Error parsing JSON from pump.fun API for ${tokenMint}:`, parseError);
                 // If the response isn't valid JSON, it's not a valid pump.fun token for this strategy
                 return false;
             }
 
              // Basic validation of essential bonding curve data
-            if (!data.bonding_curve || !data.associated_bonding_curve || !data.mint || data.mint !== mintAddress) {
+            if (!data.bonding_curve || !data.associated_bonding_curve || !data.mint || data.mint !== tokenMint) {
                 console.log("PumpFunBondingCurveStrategy: Incomplete or mismatched pump.fun coin data.");
                 return false; // Not a valid pump token for bonding curve interaction
             }
@@ -123,17 +124,31 @@ export class PumpFunBondingCurveSwapStrategy implements ISwapStrategy {
         });
 
         // Fetch pump.fun coin data
-        const dataURL = `https://frontend-api-v3.pump.fun/coins/${tokenAddress.toString()}`;
+        const tokenMint = type === 'buy' ? outputMint : inputMint;
+        const dataURL = `https://frontend-api-v3.pump.fun/coins/${tokenMint}`;
         let data: any;
         try {
             const response = await fetch(dataURL);
             if (!response.ok) {
                 throw new Error(`Failed to fetch pump.fun coin data: ${response.statusText}`);
             }
-            data = await response.json();
+            const rawText = await response.text();
+            try {
+                data = JSON.parse(rawText);
+            } catch (parseError) {
+                console.error("Error parsing JSON from pump.fun API for", tokenMint, ":", parseError);
+                console.error("Raw response was:", rawText);
+                return {
+                    success: false,
+                    error: `Pump.fun API returned invalid data for token ${tokenMint}. Please try again later or with a different token.`
+                };
+            }
         } catch (error) {
             console.error("Error fetching pump.fun data for instruction generation:", error);
-            throw new Error(`Could not fetch data for pump.fun token ${tokenAddress.toString()}`);
+            return {
+                success: false,
+                error: `Could not fetch data for pump.fun token ${tokenMint}: ${error instanceof Error ? error.message : String(error)}`
+            };
         }
 
         // --- Validation (Updated) ---

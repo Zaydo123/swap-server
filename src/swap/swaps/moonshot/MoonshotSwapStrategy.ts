@@ -19,19 +19,20 @@ export class MoonshotSwapStrategy implements ISwapStrategy {
     // Simple check based on suffix, might need refinement
     async canHandle(
         transactionDetails: TransactionProps,
-        dependencies: SwapStrategyDependencies // Added dependencies parameter
-        ): Promise<boolean> {
-         // Check if the mint address ends with 'moon'
-        const inputMint = transactionDetails.params.inputMint;
-        const isMoonToken = inputMint.endsWith('moon');
+        dependencies: SwapStrategyDependencies
+    ): Promise<boolean> {
+        const { inputMint, outputMint, type } = transactionDetails.params;
+        const tokenMint = type === 'buy' ? outputMint : inputMint;
+        // Check if the mint address ends with 'moon'
+        const isMoonToken = tokenMint.endsWith('moon');
         if (!isMoonToken) {
             return false;
         }
 
         // Further check: ensure it's not migrated, but allow handling even if API fails
         try {
-            console.log("Checking MoonshotStrategy eligibility for:", inputMint);
-            const response = await fetch(`https://api.moonshot.cc/token/v1/solana/${inputMint}`);
+            console.log("Checking MoonshotStrategy eligibility for:", tokenMint);
+            const response = await fetch(`https://api.moonshot.cc/token/v1/solana/${tokenMint}`);
             
             if (!response.ok) {
                 // If API fails (e.g., 404), still return true for a .moon token.

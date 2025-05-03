@@ -33,17 +33,18 @@ export class RaydiumSwapStrategy implements ISwapStrategy {
         transactionDetails: TransactionProps,
         dependencies: SwapStrategyDependencies
     ): Promise<boolean> {
-        const mintAddress = transactionDetails.params.inputMint;
-        console.log("Checking RaydiumStrategy eligibility for:", mintAddress);
+        const { inputMint, outputMint, type } = transactionDetails.params;
+        const tokenMint = type === 'buy' ? outputMint : inputMint;
+        console.log("Checking RaydiumStrategy eligibility for token mint:", tokenMint);
 
         // Check for Pump.fun tokens first
-        if (mintAddress.toLowerCase().includes('pump')) {
-            console.log(`RaydiumStrategy: Detected pump token ${mintAddress}, checking details...`);
+        if (tokenMint.toLowerCase().includes('pump')) {
+            console.log(`RaydiumStrategy: Detected pump token ${tokenMint}, checking details...`);
             try {
-                const dataURL = `https://frontend-api-v3.pump.fun/coins/${mintAddress}`;
+                const dataURL = `https://frontend-api-v3.pump.fun/coins/${tokenMint}`;
                 const response = await fetch(dataURL);
                 if (!response.ok) {
-                    console.warn(`RaydiumStrategy: Failed to fetch pump.fun data for ${mintAddress} (${response.status}). Rejecting.`);
+                    console.warn(`RaydiumStrategy: Failed to fetch pump.fun data for ${tokenMint} (${response.status}). Rejecting.`);
                     return false; // Cannot verify, reject
                 }
                 const data = await response.json();
@@ -54,45 +55,45 @@ export class RaydiumSwapStrategy implements ISwapStrategy {
                 const isBeforeCutoff = createdTimestamp && createdTimestamp < 1742234121000;
 
                 if (hasRaydiumPool && isBeforeCutoff) {
-                    console.log(`RaydiumStrategy: Pump token ${mintAddress} has Raydium pool (${data.raydium_pool}) and created before cutoff (${new Date(createdTimestamp).toISOString()}). CAN handle.`);
+                    console.log(`RaydiumStrategy: Pump token ${tokenMint} has Raydium pool (${data.raydium_pool}) and created before cutoff (${new Date(createdTimestamp).toISOString()}). CAN handle.`);
                     return true; // Old, migrated pump token with a Raydium pool
                 } else {
-                    console.log(`RaydiumStrategy: Pump token ${mintAddress} does not meet Raydium criteria (hasRaydiumPool: ${hasRaydiumPool}, isBeforeCutoff: ${isBeforeCutoff}). Rejecting.`);
+                    console.log(`RaydiumStrategy: Pump token ${tokenMint} does not meet Raydium criteria (hasRaydiumPool: ${hasRaydiumPool}, isBeforeCutoff: ${isBeforeCutoff}). Rejecting.`);
                     return false; // Newer pump token or one without Raydium pool
                 }
             } catch (error) {
-                console.error(`RaydiumStrategy: Error checking pump.fun details for ${mintAddress}:`, error);
+                console.error(`RaydiumStrategy: Error checking pump.fun details for ${tokenMint}:`, error);
                 return false; // Error during check, reject
             }
         }
 
         // Check for Moonshot tokens
-        if (mintAddress.toLowerCase().includes('moon')) {
-            console.log(`RaydiumStrategy: Detected moon token ${mintAddress}, checking migration...`);
+        if (tokenMint.toLowerCase().includes('moon')) {
+            console.log(`RaydiumStrategy: Detected moon token ${tokenMint}, checking migration...`);
             try {
-                const response = await fetch(`https://api.moonshot.cc/token/v1/solana/${mintAddress}`);
+                const response = await fetch(`https://api.moonshot.cc/token/v1/solana/${tokenMint}`);
                  if (!response.ok) {
-                    console.warn(`RaydiumStrategy: Failed to fetch moonshot data for ${mintAddress} (${response.status}). Rejecting.`);
+                    console.warn(`RaydiumStrategy: Failed to fetch moonshot data for ${tokenMint} (${response.status}). Rejecting.`);
                     return false; // Cannot verify, reject
                 }
                 const data = await response.json();
                 const isMigrated = data?.moonshot?.progress === 100;
 
                 if (isMigrated) {
-                    console.log(`RaydiumStrategy: Moon token ${mintAddress} is fully migrated. CAN handle.`);
+                    console.log(`RaydiumStrategy: Moon token ${tokenMint} is fully migrated. CAN handle.`);
                     return true; // Raydium handles fully migrated Moonshot tokens
                 } else {
-                    console.log(`RaydiumStrategy: Moon token ${mintAddress} is not fully migrated (progress: ${data?.moonshot?.progress}%). Rejecting.`);
+                    console.log(`RaydiumStrategy: Moon token ${tokenMint} is not fully migrated (progress: ${data?.moonshot?.progress}%). Rejecting.`);
                     return false; // MoonshotSwapStrategy handles non-migrated tokens
                 }
             } catch (error) {
-                console.error(`RaydiumStrategy: Error checking moonshot details for ${mintAddress}:`, error);
+                console.error(`RaydiumStrategy: Error checking moonshot details for ${tokenMint}:`, error);
                 return false; // Error during check, reject
             }
         }
 
         // Final check: Verify if the token exists on standard Raydium pools
-        console.log(`RaydiumStrategy: Performing final check for ${mintAddress} on standard Raydium pools...`);
+        console.log(`RaydiumStrategy: Performing final check for ${tokenMint} on standard Raydium pools...`);
         try {
             // Initialize Raydium SDK instance for the check
             const raydium = await Raydium.load({ 
@@ -105,19 +106,19 @@ export class RaydiumSwapStrategy implements ISwapStrategy {
             // Fetch pool info using the SDK
             const poolInfo = await raydium.api.fetchPoolByMints({ 
                 mint1: NATIVE_MINT.toString(), 
-                mint2: mintAddress 
+                mint2: tokenMint 
             });
 
             // Check if pool data was found
             if (poolInfo && poolInfo.data && poolInfo.data.length > 0) {
-                 console.log(`RaydiumStrategy: Standard Raydium pool found for ${mintAddress}. CAN handle.`);
+                 console.log(`RaydiumStrategy: Standard Raydium pool found for ${tokenMint}. CAN handle.`);
                  return true;
             } else {
-                console.log(`RaydiumStrategy: No standard Raydium pool found for ${mintAddress} via SDK. Rejecting.`);
+                console.log(`RaydiumStrategy: No standard Raydium pool found for ${tokenMint} via SDK. Rejecting.`);
                 return false;
             }
         } catch (error) {
-             console.error(`RaydiumStrategy: Error during final Raydium pool check for ${mintAddress}:`, error);
+             console.error(`RaydiumStrategy: Error during final Raydium pool check for ${tokenMint}:`, error);
              return false; // Error during check, reject
         }
     }

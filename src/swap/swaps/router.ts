@@ -21,9 +21,9 @@ export async function getSwapStrategy(
     transactionDetails: TransactionProps,
     dependencies: SwapStrategyDependencies 
 ): Promise<ISwapStrategy> {
-    const mintAddress = transactionDetails.params.inputMint;
-    
-    console.log(`Routing swap for mint: ${mintAddress}`);
+    const { inputMint, outputMint, type } = transactionDetails.params;
+    const tokenMint = type === 'buy' ? outputMint : inputMint;
+    console.log(`Routing swap for token mint: ${tokenMint}`);
 
     // 1. Create temporary instances for canHandle checks
     const tempStrategies = strategyClasses.map(StrategyClass => {
@@ -69,6 +69,6 @@ export async function getSwapStrategy(
     }
 
     // If no strategy returned true
-    console.error(`Could not find any swap strategy for mint: ${mintAddress}. All canHandle checks returned false or failed.`);
-    throw new Error(`Unsupported token or swap type for mint: ${mintAddress}`);
+    console.error(`Could not find any swap strategy for token: ${tokenMint}. All canHandle checks returned false or failed.`);
+    throw new Error(`Unsupported token or swap type for token: ${tokenMint}`);
 } 
