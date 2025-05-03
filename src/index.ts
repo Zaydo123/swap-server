@@ -100,19 +100,19 @@ app.get('/docs', (_req: Request, res: Response) => {
           },
           responses: {
             '200': {
-              description: 'Unsigned transaction or error',
+              description: 'Unsigned transactions or error',
               content: {
                 'application/json': {
                   schema: {
                     type: 'object',
                     properties: {
                       success: { type: 'boolean' },
-                      transactionMessageOrTx: { type: 'object', description: 'Unsigned transaction object (base64 or JSON)' },
+                      transactions: { type: 'array', items: { type: 'string', description: 'Base64-encoded unsigned transaction' } },
+                      txCount: { type: 'integer', description: 'Number of transactions to sign and send' },
                       swapInstructions: { type: 'array', items: { type: 'object' } },
                       cleanupInstructions: { type: 'array', items: { type: 'object' } },
                       feeAmountLamports: { type: 'string' },
                       poolAddress: { type: 'string' },
-                      needsSeparateSendyFeeTx: { type: 'boolean' },
                       error: { type: 'string', nullable: true }
                     }
                   }

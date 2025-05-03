@@ -57,13 +57,13 @@ export async function generateSwapTransaction(
   connection: Connection
 ): Promise<{
   success: boolean;
-  transactionMessageOrTx?: TransactionMessage | VersionedTransaction;
+  transactions: (TransactionMessage | VersionedTransaction)[];
+  txCount: number;
   swapInstructions?: TransactionInstruction[];
   cleanupInstructions?: TransactionInstruction[];
   feeAmountLamports?: bigint;
   poolAddress?: PublicKey;
   error?: any;
-  needsSeparateSendyFeeTx: boolean;
 }> {
   try {
     // --- 1. Handle Associated Token Account --- //
@@ -109,15 +109,30 @@ export async function generateSwapTransaction(
       strategyDependencies
     ) as StrategyResult;
 
-    let transactionMessageOrTx: TransactionMessage | VersionedTransaction | undefined;
-    let needsSeparateSendyFeeTx = false;
+    let transactions: (TransactionMessage | VersionedTransaction)[] = [];
+
     if ((result as any)._raydiumVersionedTx instanceof VersionedTransaction) {
+      // Raydium returns a pre-built transaction, so Sendy fee must be a separate tx if needed
       let raydiumTx = (result as any)._raydiumVersionedTx as VersionedTransaction;
+      transactions.push(raydiumTx);
       if (result.sendyFeeLamports && result.sendyFeeLamports > 0n) {
-        needsSeparateSendyFeeTx = true;
+        // Build a separate Sendy fee transaction
+        const { blockhash } = await connection.getLatestBlockhash();
+        const feeTxMsg = new TransactionMessage({
+          payerKey: userWalletAddress,
+          recentBlockhash: blockhash,
+          instructions: [
+            SystemProgram.transfer({
+              fromPubkey: userWalletAddress,
+              toPubkey: SENDY_FEE_ACCOUNT,
+              lamports: Number(result.sendyFeeLamports)
+            })
+          ]
+        });
+        transactions.push(feeTxMsg);
       }
-      transactionMessageOrTx = raydiumTx;
     } else if (result.instructions && result.instructions.length > 0) {
+      // Standard case: include Sendy fee as first instruction
       let allInstructions = [...ataInstructions, ...result.instructions];
       if (result.sendyFeeLamports && result.sendyFeeLamports > 0n) {
         const feeInstruction = SystemProgram.transfer({
@@ -128,29 +143,32 @@ export async function generateSwapTransaction(
         allInstructions.unshift(feeInstruction);
       }
       const { blockhash } = await connection.getLatestBlockhash();
-      transactionMessageOrTx = new TransactionMessage({
+      const txMsg = new TransactionMessage({
         payerKey: userWalletAddress,
         recentBlockhash: blockhash,
         instructions: allInstructions,
       });
+      transactions.push(txMsg);
     } else {
       throw new Error('Swap strategy did not return a transaction or instructions.');
     }
 
     return {
       success: true,
-      transactionMessageOrTx: transactionMessageOrTx,
+      transactions,
+      txCount: transactions.length,
       swapInstructions: result.instructions,
       cleanupInstructions: result.cleanupInstructions,
       feeAmountLamports: result.sendyFeeLamports || 0n,
       poolAddress: result.poolAddress,
-      needsSeparateSendyFeeTx,
+      error: null,
     };
   } catch (error) {
     return {
       success: false,
+      transactions: [],
+      txCount: 0,
       error: error instanceof Error ? error.message : 'Failed to generate swap transaction',
-      needsSeparateSendyFeeTx: false,
     };
   }
 } 
