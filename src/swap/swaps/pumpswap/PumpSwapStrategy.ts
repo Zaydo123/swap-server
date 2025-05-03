@@ -13,9 +13,8 @@ import {
     createAssociatedTokenAccountInstruction,
     createSyncNativeInstruction
 } from '@solana/spl-token';
-import { BN } from "@coral-xyz/anchor";
-import { TransactionProps } from '../../swap';
-import { ISwapStrategy, GenerateInstructionsResult, SwapStrategyDependencies } from '../base/ISwapStrategy';
+import { TransactionProps, GenerateInstructionsResult } from '../base/ISwapStrategy';
+import { ISwapStrategy, SwapStrategyDependencies } from '../base/ISwapStrategy';
 import { Buffer } from 'buffer';
 import { ensureUserTokenAccounts } from '../utils/ensureTokenAccounts';
 
@@ -58,7 +57,7 @@ export class PumpSwapStrategy implements ISwapStrategy {
         transactionDetails: TransactionProps,
         dependencies: SwapStrategyDependencies
     ): Promise<boolean> {
-        const mintAddress = transactionDetails.params.mintAddress;
+        const mintAddress = transactionDetails.params.inputMint;
         // Removed poolAddress as it's not reliably useful for canHandle if the main API fails
         
         try {
@@ -96,11 +95,11 @@ export class PumpSwapStrategy implements ISwapStrategy {
     ): Promise<GenerateInstructionsResult> {
         console.log('--- Generating PumpSwap Swap Instructions using Direct Transaction Building ---');
         const { connection } = dependencies;
-        const { type, amount, amountIsInSol, slippage, userWalletAddress, mintAddress, pairAddress } = transactionDetails.params;
+        const { type, amount, slippageBps, userWalletAddress, inputMint, outputMint } = transactionDetails.params;
 
         // Ensure the user has ATAs for input and output mints
         const preparatoryInstructions: TransactionInstruction[] = [];
-        const mintsToEnsure = Array.from(new Set([mintAddress, "So11111111111111111111111111111111111111112"]))
+        const mintsToEnsure = Array.from(new Set([inputMint, outputMint]))
             .map((s) => new PublicKey(s));
         await ensureUserTokenAccounts({
             connection,
@@ -110,20 +109,20 @@ export class PumpSwapStrategy implements ISwapStrategy {
         });
 
         // --- WRAP SOL IF NEEDED (for buy with SOL) ---
-        if (type === 'buy' && amountIsInSol) {
+        if (type === 'buy' && inputMint === "So11111111111111111111111111111111111111112") {
             const userQuoteTokenAccount = getAssociatedTokenAddressSync(
                 new PublicKey("So11111111111111111111111111111111111111112"),
                 new PublicKey(userWalletAddress)
             );
-            const solAmountIn = BigInt(Math.floor(amount * LAMPORTS_PER_SOL));
+            const solAmountIn = BigInt(Math.floor(Number(amount) * Number(LAMPORTS_PER_SOL)));
             const wsolAccountInfo = await connection.getAccountInfo(userQuoteTokenAccount);
             let requiredLamports = solAmountIn;
 
             if (!wsolAccountInfo) {
                 // Account does not exist, must fund with rent-exemption + swap amount
-                const rentExempt = await connection.getMinimumBalanceForRentExemption(165);
-                requiredLamports = solAmountIn + BigInt(rentExempt);
-            } else if (wsolAccountInfo.lamports < solAmountIn) {
+                const rentExempt = BigInt(await connection.getMinimumBalanceForRentExemption(165));
+                requiredLamports = solAmountIn + rentExempt;
+            } else if (BigInt(wsolAccountInfo.lamports) < solAmountIn) {
                 // Account exists, but not enough lamports
                 requiredLamports = solAmountIn - BigInt(wsolAccountInfo.lamports);
             } else {
@@ -145,7 +144,7 @@ export class PumpSwapStrategy implements ISwapStrategy {
         }
 
         // --- ENSURE WSOL ATA EXISTS FOR SELL (for receiving SOL as WSOL) ---
-        if (type === 'sell') {
+        if (type === 'sell' && outputMint === "So11111111111111111111111111111111111111112") {
             const userWSOLAccount = getAssociatedTokenAddressSync(
                 NATIVE_MINT,
                 new PublicKey(userWalletAddress)
@@ -153,7 +152,7 @@ export class PumpSwapStrategy implements ISwapStrategy {
             const wsolAccountInfo = await connection.getAccountInfo(userWSOLAccount);
             if (!wsolAccountInfo) {
                 // If the WSOL ATA does not exist, create it and fund with rent-exemption only
-                const rentExempt = await connection.getMinimumBalanceForRentExemption(165);
+                const rentExempt = BigInt(await connection.getMinimumBalanceForRentExemption(165));
                 preparatoryInstructions.push(
                     createAssociatedTokenAccountInstruction(
                         new PublicKey(userWalletAddress),
@@ -166,7 +165,7 @@ export class PumpSwapStrategy implements ISwapStrategy {
                     SystemProgram.transfer({
                         fromPubkey: new PublicKey(userWalletAddress),
                         toPubkey: userWSOLAccount,
-                        lamports: rentExempt,
+                        lamports: Number(rentExempt),
                     })
                 );
                 preparatoryInstructions.push(
@@ -184,11 +183,11 @@ export class PumpSwapStrategy implements ISwapStrategy {
         let poolData: any;
         let apiQuoteMint: string = "So11111111111111111111111111111111111111112"; // default to WSOL
         try {
-            const pumpswapPoolURL = `https://swap-api.pump.fun/v1/pools/pump-pool?base=${mintAddress}`;
+            const pumpswapPoolURL = `https://swap-api.pump.fun/v1/pools/pump-pool?base=${inputMint}`;
             const response = await fetch(pumpswapPoolURL);
             if (!response.ok) {
                 // If the primary lookup fails, we cannot proceed as we need pool data
-                throw new Error(`Failed to fetch required pool data for ${mintAddress}. Status: ${response.status}`);
+                throw new Error(`Failed to fetch required pool data for ${inputMint}. Status: ${response.status}`);
             }
             poolData = await response.json();
             console.log('Successfully fetched pool data via base mint lookup.');
@@ -202,11 +201,11 @@ export class PumpSwapStrategy implements ISwapStrategy {
             }
         } catch (error) {
             console.error("Error fetching pool data:", error);
-            throw new Error(`Could not fetch pool data for ${mintAddress}: ${error instanceof Error ? error.message : String(error)}`);
+            throw new Error(`Could not fetch pool data for ${inputMint}: ${error instanceof Error ? error.message : String(error)}`);
         }
 
         // Use the pool PDA/address from the API response
-        const baseMint = new PublicKey(mintAddress);
+        const baseMint = new PublicKey(inputMint);
         const quoteMint = new PublicKey(apiQuoteMint);
         const pool = new PublicKey(poolData.address);
         // Log the API's pool address for confirmation
@@ -220,18 +219,18 @@ export class PumpSwapStrategy implements ISwapStrategy {
         const baseReserves = BigInt(String(poolData.baseReserves));
         const quoteReserves = BigInt(String(poolData.quoteReserves));
 
-        let tokenAmount: bigint;
-        let solAmount: bigint;
+        let tokenAmount: bigint = 0n;
+        let solAmount: bigint = 0n;
         let sendyFeeLamports: bigint = 0n;
 
-        // Convert slippage from percentage to basis points
-        const slippageBasisPoints = BigInt(Math.floor(slippage * 100));
+        // Convert slippage from basis points to percentage
+        const slippagePercentage = Number(slippageBps) / 100;
 
         if (type === 'buy') {
             // Buying token with SOL
-            if (amountIsInSol) {
+            if (inputMint === "So11111111111111111111111111111111111111112") {
                 // Input: SOL amount. Calculate min token out.
-                const solAmountIn = BigInt(Math.floor(amount * LAMPORTS_PER_SOL));
+                const solAmountIn = BigInt(typeof amount === 'string' ? Math.floor(Number(amount) * Number(LAMPORTS_PER_SOL)) : Math.floor(Number(amount) * Number(LAMPORTS_PER_SOL)));
                 
                 // Calculate expected token out using constant product formula
                 if (quoteReserves === 0n || baseReserves === 0n) {
@@ -244,7 +243,7 @@ export class PumpSwapStrategy implements ISwapStrategy {
                 const baseAmountOut = baseReserves - newBaseReserves;
                 
                 // Apply slippage tolerance
-                const minBaseAmountOut = baseAmountOut - (baseAmountOut * slippageBasisPoints) / 10000n;
+                const minBaseAmountOut = baseAmountOut - (baseAmountOut * BigInt(Math.floor(slippagePercentage * 100))) / 10000n;
                 
                 // Set values for transaction
                 tokenAmount = minBaseAmountOut;
@@ -256,7 +255,7 @@ export class PumpSwapStrategy implements ISwapStrategy {
                 console.log(`PumpSwap Buy (SOL Input): SOL In = ${solAmountIn}, Min Token Out = ${minBaseAmountOut}, Fee = ${sendyFeeLamports}`);
             } else {
                 // Input: Token amount. Calculate max SOL in.
-                const baseAmountOut = BigInt(Math.floor(amount * (10 ** baseDecimals)));
+                const baseAmountOut = BigInt(Math.floor(Number(amount) * Math.pow(10, Number(baseDecimals))));
                 
                 // Ensure amount doesn't exceed pool reserves
                 if (baseAmountOut >= baseReserves) {
@@ -270,7 +269,7 @@ export class PumpSwapStrategy implements ISwapStrategy {
                 const quoteAmountIn = newQuoteReserves - quoteReserves;
                 
                 // Apply slippage tolerance
-                const maxQuoteAmountIn = quoteAmountIn + (quoteAmountIn * slippageBasisPoints) / 10000n;
+                const maxQuoteAmountIn = quoteAmountIn + (quoteAmountIn * BigInt(Math.floor(slippagePercentage * 100))) / 10000n;
                 
                 // Set values for transaction
                 tokenAmount = baseAmountOut;
@@ -281,9 +280,9 @@ export class PumpSwapStrategy implements ISwapStrategy {
                 
                 console.log(`PumpSwap Buy (Token Output): Max SOL In = ${maxQuoteAmountIn}, Token Out = ${baseAmountOut}, Fee = ${sendyFeeLamports}`);
             }
-        } else {
+        } else if (type === 'sell') {
             // Selling token for SOL
-            const baseAmountIn = BigInt(Math.floor(amount * (10 ** baseDecimals)));
+            const baseAmountIn = BigInt(Math.floor(Number(amount) * Math.pow(10, Number(baseDecimals))));
             
             // Calculate expected SOL out using constant product formula
             if (quoteReserves === 0n || baseReserves === 0n) {
@@ -296,7 +295,7 @@ export class PumpSwapStrategy implements ISwapStrategy {
             const quoteAmountOut = quoteReserves - newQuoteReserves;
             
             // Apply slippage tolerance
-            const minQuoteAmountOut = quoteAmountOut - (quoteAmountOut * slippageBasisPoints) / 10000n;
+            const minQuoteAmountOut = quoteAmountOut - (quoteAmountOut * BigInt(Math.floor(slippagePercentage * 100))) / 10000n;
             
             // Set values for transaction
             tokenAmount = baseAmountIn;
@@ -400,6 +399,7 @@ export class PumpSwapStrategy implements ISwapStrategy {
 
         console.log('PumpSwap instructions created successfully');
         return {
+            success: true,
             instructions: allInstructions,
             sendyFeeLamports: sendyFeeLamports,
             poolAddress: pool

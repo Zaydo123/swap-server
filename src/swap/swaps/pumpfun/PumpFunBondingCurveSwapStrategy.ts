@@ -1,11 +1,12 @@
 import { PublicKey, TransactionInstruction, SystemProgram } from '@solana/web3.js';
 import { TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID, getAssociatedTokenAddress, NATIVE_MINT } from '@solana/spl-token';
 import { LAMPORTS_PER_SOL } from '@solana/web3.js';
-import { TransactionProps } from '../../swap'; // Adjust path
-import { ISwapStrategy, GenerateInstructionsResult, SwapStrategyDependencies } from '../base/ISwapStrategy';
+import { ISwapStrategy, SwapStrategyDependencies, TransactionProps, GenerateInstructionsResult } from '../base/ISwapStrategy';
 import * as CNST from '../../constants'; // Adjust path
 import { Buffer } from 'buffer';
-import { ensureUserTokenAccounts } from '../utils/ensureTokenAccounts';
+import { prepareTokenAccounts, addWsolUnwrapInstructionIfNeeded } from '../../../utils/tokenAccounts';
+import { makeSendyFeeInstruction } from '../../../utils/feeUtils';
+import { FEE_RECIPIENT } from '../../constants';
 
 // Helper from original swap.ts - move to utils later?
 function bufferFromUInt64(value: number | string) {
@@ -29,7 +30,7 @@ export class PumpFunBondingCurveSwapStrategy implements ISwapStrategy {
         transactionDetails: TransactionProps,
         dependencies: SwapStrategyDependencies
     ): Promise<boolean> {
-        const mintAddress = transactionDetails.params.mintAddress;
+        const mintAddress = transactionDetails.params.inputMint;
         // This strategy only handles pump tokens
         // EndsWith check removed as router might handle non-pump tokens first
 
@@ -93,29 +94,37 @@ export class PumpFunBondingCurveSwapStrategy implements ISwapStrategy {
     }
 
 
+    /**
+     * Generates all instructions required for a Pump.fun bonding curve swap, including:
+     *   - ATA creation (setup)
+     *   - Fee transfer (if needed)
+     *   - The swap instruction(s)
+     * All instructions are returned in a single array, in the correct order, for bundling into a single transaction.
+     * No setup or side-effect instructions are sent outside this transaction.
+     */
     async generateSwapInstructions(
         transactionDetails: TransactionProps,
         dependencies: SwapStrategyDependencies
     ): Promise<GenerateInstructionsResult> {
         console.log('--- Generating Pump.fun Bonding Curve Swap Instructions ---');
         const { connection } = dependencies;
-        const { type, amount, amountIsInSol, slippage, userWalletAddress, mintAddress } = transactionDetails.params;
+        const { type, amount, slippageBps, userWalletAddress, inputMint, outputMint } = transactionDetails.params;
         const payer = new PublicKey(userWalletAddress);
-        const tokenAddress = new PublicKey(mintAddress);
+        const tokenAddress = new PublicKey(inputMint);
 
-        // Ensure the user has ATAs for input and output mints
+        // Ensure the user has ATAs for input and output mints using shared utility
         const preparatoryInstructions: TransactionInstruction[] = [];
         const mintsToEnsure = Array.from(new Set([tokenAddress, NATIVE_MINT].map((m) => m.toString()))).map((s) => new PublicKey(s));
-        await ensureUserTokenAccounts({
+        await prepareTokenAccounts({
             connection,
             userPublicKey: payer,
             mints: mintsToEnsure,
-            preparatoryInstructions
+            instructions: preparatoryInstructions,
         });
 
         // Fetch pump.fun coin data
         const dataURL = `https://frontend-api-v3.pump.fun/coins/${tokenAddress.toString()}`;
-        let data: any; // Use 'any' for now, or create a partial type based on GetMetadataResponse
+        let data: any;
         try {
             const response = await fetch(dataURL);
             if (!response.ok) {
@@ -123,46 +132,44 @@ export class PumpFunBondingCurveSwapStrategy implements ISwapStrategy {
             }
             data = await response.json();
         } catch (error) {
-             console.error("Error fetching pump.fun data for instruction generation:", error);
-             throw new Error(`Could not fetch data for pump.fun token ${tokenAddress.toString()}`);
+            console.error("Error fetching pump.fun data for instruction generation:", error);
+            throw new Error(`Could not fetch data for pump.fun token ${tokenAddress.toString()}`);
         }
 
-        // --- Validation (Updated) --- 
+        // --- Validation (Updated) ---
         if (!data) {
             throw new Error('Fetched pump.fun data is null or undefined');
         }
         if (!data.bonding_curve || !data.associated_bonding_curve) {
             throw new Error('Invalid bonding curve addresses in pump.fun data');
         }
-        // Check reserves (removed decimals check)
         if (data.virtual_sol_reserves == null || data.virtual_token_reserves == null) {
-             throw new Error('Missing reserve data in pump.fun data');
+            throw new Error('Missing reserve data in pump.fun data');
         }
         if (typeof data.virtual_sol_reserves !== 'number' && typeof data.virtual_sol_reserves !== 'string') {
-             throw new Error('Invalid type for virtual_sol_reserves in pump.fun data');
+            throw new Error('Invalid type for virtual_sol_reserves in pump.fun data');
         }
-         if (typeof data.virtual_token_reserves !== 'number' && typeof data.virtual_token_reserves !== 'string') {
-             throw new Error('Invalid type for virtual_token_reserves in pump.fun data');
+        if (typeof data.virtual_token_reserves !== 'number' && typeof data.virtual_token_reserves !== 'string') {
+            throw new Error('Invalid type for virtual_token_reserves in pump.fun data');
         }
 
-        // --- Fetch Decimals from Mint Account --- 
+        // --- Fetch Decimals from Mint Account ---
         let decimals: number;
         try {
             const mintInfo = await connection.getParsedAccountInfo(tokenAddress);
             if (!mintInfo.value || !('parsed' in mintInfo.value.data) || !mintInfo.value.data.parsed?.info?.decimals) {
-                 throw new Error('Could not parse decimal info from mint account.');
+                throw new Error('Could not parse decimal info from mint account.');
             }
-             decimals = mintInfo.value.data.parsed.info.decimals;
-             console.log(`Fetched decimals for ${tokenAddress.toString()}: ${decimals}`);
+            decimals = mintInfo.value.data.parsed.info.decimals;
+            console.log(`Fetched decimals for ${tokenAddress.toString()}: ${decimals}`);
         } catch(mintError) {
-             console.error(`Error fetching decimals for mint ${tokenAddress.toString()}:`, mintError);
-              throw new Error(`Failed to fetch decimals for token ${tokenAddress.toString()}: ${mintError instanceof Error ? mintError.message : String(mintError)}`);
+            console.error(`Error fetching decimals for mint ${tokenAddress.toString()}:`, mintError);
+            throw new Error(`Failed to fetch decimals for token ${tokenAddress.toString()}: ${mintError instanceof Error ? mintError.message : String(mintError)}`);
         }
-        // --- End Fetch Decimals --- 
+        // --- End Fetch Decimals ---
 
         const BONDING_CURVE = new PublicKey(data.bonding_curve);
         const ASSOCIATED_BONDING_CURVE = new PublicKey(data.associated_bonding_curve);
-        // Use decimals fetched from blockchain
         const tokenDecimalMultiplier = 10 ** decimals;
 
         // Get user's ATA - Pump requires allowOwnerOffCurve = true
@@ -177,40 +184,21 @@ export class PumpFunBondingCurveSwapStrategy implements ISwapStrategy {
         const virtualTokenReserves = BigInt(String(data.virtual_token_reserves));
         const lampsPerSol = BigInt(LAMPORTS_PER_SOL);
 
-        // Calculate token amount and SOL amount (logic from original swap.ts, adapted for bigint)
+        // Calculate token amount and SOL amount
         let tokenAmountRaw: bigint;
         let solAmountLamports: bigint;
         let sendyFeeLamports: bigint = 0n;
-
         if (type === 'buy') {
-            if (amountIsInSol) {
-                // Calculate SOL input with slippage (max SOL willing to spend)
-                const baseSolInput = BigInt(Math.floor(amount * LAMPORTS_PER_SOL)); // Base SOL amount in lamports
-                solAmountLamports = baseSolInput + (baseSolInput * BigInt(Math.floor(slippage * 100))) / 10000n; // Add slippage %
-                
-                // Calculate minimum token amount out based on BASE SOL input (like in pumpswap.ts)
-                if (virtualSolReserves === 0n) throw new Error("Pump virtual SOL reserves are zero.");
-                // Use baseSolInput here for calculation
-                tokenAmountRaw = (virtualTokenReserves * baseSolInput) / (virtualSolReserves + baseSolInput);
-                
-                sendyFeeLamports = solAmountLamports / 100n; // 1% fee on max SOL input
-                console.log('Pump Buy (SOL input): ', { maxSolIn: solAmountLamports, minTokenOut: tokenAmountRaw, fee: sendyFeeLamports });
-            } else {
-                // Input is token amount (desired output)
-                 tokenAmountRaw = BigInt(Math.floor(amount * tokenDecimalMultiplier)); // Uses fetched decimals
-                // Calculate SOL required for the desired tokens
-                // sol_in = (virtual_sol_reserves * token_out) / (virtual_token_reserves - token_out)
-                 if (virtualTokenReserves <= tokenAmountRaw) throw new Error("Desired token amount exceeds pump reserves.");
-                const baseSolRequired = (virtualSolReserves * tokenAmountRaw) / (virtualTokenReserves - tokenAmountRaw) + 1n; // Add 1 for rounding up
-                // Add slippage to calculate max SOL willing to spend
-                 solAmountLamports = baseSolRequired + (baseSolRequired * BigInt(Math.floor(slippage * 100))) / 10000n;
-                sendyFeeLamports = solAmountLamports / 100n; // 1% fee on max SOL input
-                 console.log('Pump Buy (Token input): ', { minTokenOut: tokenAmountRaw, maxSolIn: solAmountLamports, fee: sendyFeeLamports });
-            }
+            const baseSolInput = BigInt(Math.floor(Number(amount) * LAMPORTS_PER_SOL));
+            solAmountLamports = baseSolInput + (baseSolInput * BigInt(slippageBps)) / 10000n;
+            if (virtualSolReserves === 0n) throw new Error("Pump virtual SOL reserves are zero.");
+            tokenAmountRaw = (virtualTokenReserves * baseSolInput) / (virtualSolReserves + baseSolInput);
+            sendyFeeLamports = solAmountLamports / 100n; // 1% fee on max SOL input
+            console.log('Pump Buy (SOL input): ', { maxSolIn: solAmountLamports, minTokenOut: tokenAmountRaw, fee: sendyFeeLamports });
         } else { // Sell
             // Input is token amount
-            tokenAmountRaw = BigInt(Math.floor(amount * tokenDecimalMultiplier)); // Uses fetched decimals
-             console.log('Pump Sell token amount (raw units): ', tokenAmountRaw);
+            tokenAmountRaw = BigInt(Math.floor(Number(amount) * Number(tokenDecimalMultiplier)));
+            console.log('Pump Sell token amount (raw units): ', tokenAmountRaw);
             // Calculate minimum SOL output with slippage
             // sol_out = (virtual_sol_reserves * token_in) / (virtual_token_reserves + token_in)
             if (virtualTokenReserves === 0n && tokenAmountRaw === 0n) {
@@ -220,10 +208,10 @@ export class PumpFunBondingCurveSwapStrategy implements ISwapStrategy {
                 throw new Error("Denominator is zero in pump sell calculation.");
             } else {
                 const expectedSolOutput = (virtualSolReserves * tokenAmountRaw) / (virtualTokenReserves + tokenAmountRaw);
-                solAmountLamports = expectedSolOutput - (expectedSolOutput * BigInt(Math.floor(slippage * 100))) / 10000n; // Subtract slippage %
+                solAmountLamports = expectedSolOutput - (expectedSolOutput * BigInt(slippageBps)) / 10000n; // Subtract slippage %
             }
             sendyFeeLamports = solAmountLamports / 100n; // 1% fee on min SOL output
-             console.log('Pump Sell (Token input): ', { tokenIn: tokenAmountRaw, minSolOut: solAmountLamports, fee: sendyFeeLamports });
+            console.log('Pump Sell (Token input): ', { tokenIn: tokenAmountRaw, minSolOut: solAmountLamports, fee: sendyFeeLamports });
         }
 
         // Ensure amounts are non-negative
@@ -231,6 +219,7 @@ export class PumpFunBondingCurveSwapStrategy implements ISwapStrategy {
         solAmountLamports = solAmountLamports < 0n ? 0n : solAmountLamports;
         sendyFeeLamports = sendyFeeLamports < 0n ? 0n : sendyFeeLamports;
 
+        // --- Build Swap Instruction(s) ---
         const instructionData = Buffer.concat([
             bufferFromUInt64(type === 'buy' ? '16927863322537952870' : '12502976635542562355'), // Discriminators
             bufferFromUInt64(tokenAmountRaw.toString()), // Convert bigint to string
@@ -268,16 +257,41 @@ export class PumpFunBondingCurveSwapStrategy implements ISwapStrategy {
              { pubkey: CNST.PUMP_FUN_PROGRAM, isSigner: false, isWritable: false },
         ];
 
-        const instruction: TransactionInstruction = {
+        const swapInstruction: TransactionInstruction = {
             programId: CNST.PUMP_FUN_PROGRAM,
             keys: type === 'buy' ? buyKeys : sellKeys,
             data: instructionData,
         };
 
+        // --- Fee Transfer Instruction ---
+        let feeInstruction: TransactionInstruction | undefined = undefined;
+        if (sendyFeeLamports > 0n) {
+            feeInstruction = makeSendyFeeInstruction({
+                from: payer,
+                to: FEE_RECIPIENT,
+                lamports: Number(sendyFeeLamports),
+            });
+        }
+
+        // --- Concatenate all instructions in correct order ---
+        const allInstructions: TransactionInstruction[] = [
+            ...preparatoryInstructions,
+            ...(feeInstruction ? [feeInstruction] : []),
+            swapInstruction,
+        ];
+
+        // Add WSOL unwrap instruction if needed (shared utility)
+        await addWsolUnwrapInstructionIfNeeded({
+            outputMint: tokenAddress.toBase58(),
+            userPublicKey: payer,
+            instructions: allInstructions
+        });
+
         return {
-            instructions: [...preparatoryInstructions, instruction],
-            sendyFeeLamports: sendyFeeLamports,
-            poolAddress: BONDING_CURVE // The bonding curve is the primary address interacted with
+            success: true,
+            instructions: allInstructions,
+            addressLookupTables: [], // TODO: handle LUTs if needed
+            sendyFeeLamports: Number(sendyFeeLamports),
         };
     }
 } 

@@ -1,47 +1,152 @@
-import { Connection } from '@solana/web3.js';
-import { generateSwapTransaction, TransactionProps } from './swap';
+import { Connection, PublicKey, LAMPORTS_PER_SOL, VersionedTransaction } from '@solana/web3.js';
+import { Request, Response } from 'express';
+import { TransactionProps, ISwapStrategy, SwapStrategyDependencies, GenerateInstructionsResult } from './swaps/base/ISwapStrategy';
+import { RaydiumSwapStrategy } from './swaps/raydium/RaydiumSwapStrategy';
+import { generateAndCompileTransaction } from './swap';
+import dotenv from 'dotenv';
 
-// Make TransactionProps.secret optional for unsigned tx generation
-export type UnsignedTransactionProps = Omit<TransactionProps, 'secret'>;
+dotenv.config();
 
-export async function buildUnsignedSwapTransaction(
-  transactionDetails: UnsignedTransactionProps,
-  heliusRpcUrl: string,
-  connection: Connection
-) {
-  // Call generateSwapTransaction with a dummy secret if required
-  const result = await generateSwapTransaction(
-    { ...transactionDetails, secret: '' } as TransactionProps,
-    heliusRpcUrl,
-    connection
-  );
+// --- Constants & Config --- 
+const RPC_URL = process.env.RPC_URL || "https://api.mainnet-beta.solana.com";
 
-  // Serialize transactions to base64 for API return
-  const serializedTransactions = result.transactions.map(tx => {
-    if ('serialize' in tx) {
-      // VersionedTransaction
-      return (tx as any).serialize().toString('base64');
-    } else if ('compileToV0Message' in tx) {
-      // TransactionMessage
-      const messageV0 = (tx as any).compileToV0Message();
-      // Create a VersionedTransaction for serialization
-      const { VersionedTransaction } = require('@solana/web3.js');
-      const vtx = new VersionedTransaction(messageV0);
-      return vtx.serialize().toString('base64');
-    } else {
-      throw new Error('Unknown transaction type for serialization');
+// --- Strategies --- 
+const strategies: ISwapStrategy[] = [
+    new RaydiumSwapStrategy(),
+];
+
+export async function handleSwapRequest(req: Request, res: Response): Promise<void> {
+    console.log('Received swap request:', req.body);
+
+    // Access request body correctly - assuming params are directly in body or nested
+    // Adjust this based on actual request structure if needed
+    const paramsFromBody = req.body.params || req.body; // Adapt as necessary
+    
+    // Validate essential params exist before creating TransactionProps
+    if (!paramsFromBody || typeof paramsFromBody.userWalletAddress !== 'string') {
+        console.error('Invalid swap request: userWalletAddress is missing or invalid.');
+        res.status(400).json({ success: false, error: 'Invalid request: userWalletAddress missing or invalid.' });
+        return;
     }
-  });
+    if (typeof paramsFromBody.inputMint !== 'string' || typeof paramsFromBody.outputMint !== 'string') {
+        console.error('Invalid swap request: inputMint or outputMint is missing or invalid.');
+        res.status(400).json({ success: false, error: 'Invalid request: inputMint or outputMint missing or invalid.' });
+        return;
+    }
+    if (typeof paramsFromBody.amount !== 'string') { // Ensure amount is string
+         console.error('Invalid swap request: amount is missing or not a string.');
+         res.status(400).json({ success: false, error: 'Invalid request: amount missing or not a string.' });
+         return;
+    }
+     if (typeof paramsFromBody.slippageBps !== 'number') {
+         console.error('Invalid swap request: slippageBps is missing or not a number.');
+         res.status(400).json({ success: false, error: 'Invalid request: slippageBps missing or not a number.' });
+         return;
+    }
+    if (typeof paramsFromBody.type !== 'string' || (paramsFromBody.type !== 'buy' && paramsFromBody.type !== 'sell')) {
+        console.error('Invalid swap request: type is missing or invalid.');
+        res.status(400).json({ success: false, error: 'Invalid request: type missing or invalid.' });
+        return;
+    }
 
-  // Return the new structure
-  return {
-    success: result.success,
-    transactions: serializedTransactions,
-    txCount: result.txCount,
-    swapInstructions: result.swapInstructions,
-    cleanupInstructions: result.cleanupInstructions,
-    feeAmountLamports: result.feeAmountLamports,
-    poolAddress: result.poolAddress,
-    error: result.error,
-  };
-} 
+    // Construct the full TransactionProps object
+    const transactionDetails: TransactionProps = {
+        params: {
+            inputMint: paramsFromBody.inputMint,
+            outputMint: paramsFromBody.outputMint,
+            amount: paramsFromBody.amount, // Already validated as string
+            slippageBps: paramsFromBody.slippageBps, // Already validated as number
+            userWalletAddress: paramsFromBody.userWalletAddress, // Already validated as string
+            type: paramsFromBody.type, // Already validated
+            priorityFee: typeof paramsFromBody.priorityFee === 'number' ? paramsFromBody.priorityFee : undefined // Optional
+        }
+    };
+
+    // --- Validate Request --- 
+    // Temporarily disable validation until path is fixed
+    // const validationError = validateTransactionProps(transactionDetails); 
+    // if (validationError) {
+    //     console.error(`Invalid swap request: ${validationError}`);
+    //     res.status(400).json({ success: false, error: validationError });
+    //     return;
+    // }
+
+    // --- Setup Dependencies --- 
+    const connection = new Connection(RPC_URL, 'confirmed');
+
+    const strategyDeps: SwapStrategyDependencies = {
+        connection,
+        rpcUrl: RPC_URL,
+    };
+
+    // --- Select Strategy --- 
+    let selectedStrategy: ISwapStrategy | null = null;
+    for (const strategy of strategies) {
+        try {
+            if (await strategy.canHandle(transactionDetails, strategyDeps)) {
+                selectedStrategy = strategy;
+                console.log(`Selected strategy: ${strategy.constructor.name}`);
+                break;
+            }
+        } catch (error) {
+            console.error(`Error checking strategy ${strategy.constructor.name}:`, error);
+        }
+    }
+
+    if (!selectedStrategy) {
+        console.error('No suitable swap strategy found for the request.');
+        res.status(400).json({ success: false, error: 'No suitable swap strategy found.' });
+        return;
+    }
+
+    try {
+        // --- Get Blockhash --- 
+        const { blockhash: recentBlockhash } = await connection.getLatestBlockhash();
+
+        // --- Generate Instructions using Strategy --- 
+        const instructionResult: GenerateInstructionsResult = await selectedStrategy.generateSwapInstructions(transactionDetails, strategyDeps);
+
+        if (!instructionResult.success) {
+              console.error(`Strategy failed to generate instructions: ${instructionResult.error}`); 
+              res.status(400).json({ success: false, error: instructionResult.error || 'Strategy failed to generate instructions' });
+        } else {
+            if (!instructionResult.instructions || instructionResult.instructions.length === 0) {
+                console.error('Strategy succeeded but returned no instructions.');
+                res.status(500).json({ success: false, error: 'Internal server error: Invalid strategy result (no instructions).' });
+                return;
+            }
+            
+            // --- Compile Transaction with Instructions from Strategy --- 
+            const userPublicKey = new PublicKey(transactionDetails.params.userWalletAddress); // Use validated param
+            // Use default fee or fee from strategy result
+            const feeLamports = instructionResult.sendyFeeLamports ? Number(instructionResult.sendyFeeLamports) : (0.00005 * LAMPORTS_PER_SOL); // Fix Number() call
+            const priorityFeeMicroLamports = transactionDetails.params.priorityFee ? transactionDetails.params.priorityFee * 1_000_000 : 0; // Convert SOL to micro-lamports if priorityFee is in SOL, adjust if it's already micro-lamports
+
+            const compiledResult = await generateAndCompileTransaction(
+                userPublicKey,
+                instructionResult.instructions, 
+                instructionResult.addressLookupTables || [], 
+                recentBlockhash,
+                priorityFeeMicroLamports, // Ensure this is in micro-lamports
+                feeLamports
+            );
+
+            if (!compiledResult.success || compiledResult.transactions.length === 0) {
+                console.error(`Transaction compilation failed: ${compiledResult.error}`); 
+                res.status(500).json({ success: false, error: compiledResult.error || 'Failed to compile transaction' });
+            } else {
+                const serializedTransactions = compiledResult.transactions.map(tx => Buffer.from(tx.serialize()).toString('base64'));
+                console.log('Successfully generated and compiled swap transaction(s).'); 
+                res.status(200).json({
+                    success: true,
+                    message: 'Swap transaction(s) generated successfully.',
+                    transactions: serializedTransactions, // Now always an array
+                    poolAddress: instructionResult.poolAddress?.toBase58() 
+                });
+            }
+        }
+    } catch (error: any) {
+        console.error(`Error handling swap request: ${error.message}`, { stack: error.stack }); 
+        res.status(500).json({ success: false, error: `Failed to process swap: ${error.message}` });
+    }
+}

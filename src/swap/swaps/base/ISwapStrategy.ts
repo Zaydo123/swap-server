@@ -1,22 +1,39 @@
-import { Connection, PublicKey, TransactionInstruction, Keypair } from '@solana/web3.js';
-import { TransactionProps } from '../../swap'; // Adjust path if needed
+import { Connection, PublicKey, TransactionInstruction, AddressLookupTableAccount, VersionedTransaction } from '@solana/web3.js';
+
+// Single source of truth for transaction parameters
+export interface TransactionProps {
+    params: {
+        // Use input/output mints for clarity with SDKs
+        inputMint: string;      // Mint address of the token being sent
+        outputMint: string;     // Mint address of the token being received
+        amount: string;         // Amount IN LAMPORTs (string for large numbers) of the inputMint token
+        slippageBps: number;    // Slippage tolerance in basis points (e.g., 50 for 0.5%)
+        userWalletAddress: string; // User's public key address
+        type: 'buy' | 'sell';   // Swap type (may influence which mint is 'amount' source)
+        priorityFee?: number;   // Optional priority fee in micro-lamports
+    };
+}
 
 export interface SwapStrategyDependencies {
   connection: Connection;
-  heliusRpcUrl: string;
-  wallet: Keypair;
+  rpcUrl: string;
   // Add other dependencies needed by strategies, e.g., Moonshot instance
 }
 
 export interface GenerateInstructionsResult {
+  /** Indicates whether instruction generation was successful. */
+  success: boolean;
+  /** Error message if generation failed. */
+  error?: string;
   /** Transaction instructions that will perform the swap */
-  instructions: TransactionInstruction[];
+  instructions?: TransactionInstruction[];
   /** Optional instructions to be added *after* main swap instructions, e.g., closing temporary accounts. */
   cleanupInstructions?: TransactionInstruction[];
   /** The calculated Sendy fee for this specific swap strategy, if applicable. */
-  sendyFeeLamports?: bigint;
+  sendyFeeLamports?: number | string | bigint;
   /** The address of the primary pool or curve being interacted with. */
   poolAddress?: PublicKey;
+  addressLookupTables?: AddressLookupTableAccount[];
 }
 
 export interface ISwapStrategy {
@@ -41,4 +58,4 @@ export interface ISwapStrategy {
     transactionDetails: TransactionProps,
     dependencies: SwapStrategyDependencies
   ): Promise<GenerateInstructionsResult>;
-} 
+}

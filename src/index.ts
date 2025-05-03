@@ -1,47 +1,16 @@
-import express, { Request, Response } from 'express';
-import { Connection } from '@solana/web3.js';
-import { buildUnsignedSwapTransaction, UnsignedTransactionProps } from './swap/entrypoint';
+import express, { Request, Response, NextFunction } from 'express';
+import cors from 'cors';
+import { handleSwapRequest } from './swap/entrypoint';
+import dotenv from 'dotenv';
+import { Connection, PublicKey } from '@solana/web3.js';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+app.use(cors());
 app.use(express.json());
 
-app.post('/swap', async (req: Request, res: Response) => {
-  try {
-    const { transactionDetails, rpcUrl } = req.body;
-
-    if (!transactionDetails || !transactionDetails.params || !rpcUrl) {
-      res.status(400).json({
-        success: false,
-        error: 'Missing required fields: transactionDetails.params and rpcUrl are required.'
-      });
-      return;
-    }
-
-    // Prepare connection
-    const connection = new Connection(rpcUrl, 'confirmed');
-
-    // Build unsigned swap transaction (no secret required)
-    const result = await buildUnsignedSwapTransaction(
-      transactionDetails as UnsignedTransactionProps,
-      rpcUrl,
-      connection
-    );
-
-    res.json({
-      ...result,
-      success: true,
-      error: null
-    });
-  } catch (error) {
-    console.error('Swap error:', error);
-    res.status(500).json({
-      success: false,
-      error: error instanceof Error ? error.message : String(error)
-    });
-  }
-});
+app.post('/swap', handleSwapRequest);
 
 app.get('/', (_req: Request, res: Response) => {
   res.send('Solana Swap Server is running!');
@@ -126,6 +95,11 @@ app.get('/docs', (_req: Request, res: Response) => {
   });
 });
 
+app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
+  console.error(err.stack);
+  res.status(500).json({ success: false, error: 'Internal Server Error' });
+});
+
 app.listen(PORT, () => {
   console.log(`Server listening on port ${PORT}`);
-}); 
+});
