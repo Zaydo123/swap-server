@@ -103,12 +103,14 @@ export class PumpFunBondingCurveSwapStrategy implements ISwapStrategy {
         const payer = new PublicKey(userWalletAddress);
         const tokenAddress = new PublicKey(mintAddress);
 
-        // Ensure user token accounts exist for the token and WSOL (middleware)
+        // Ensure the user has ATAs for input and output mints
+        const preparatoryInstructions: TransactionInstruction[] = [];
+        const mintsToEnsure = Array.from(new Set([tokenAddress, NATIVE_MINT].map((m) => m.toString()))).map((s) => new PublicKey(s));
         await ensureUserTokenAccounts({
             connection,
             userPublicKey: payer,
-            mints: [tokenAddress, NATIVE_MINT],
-            preparatoryInstructions: []
+            mints: mintsToEnsure,
+            preparatoryInstructions
         });
 
         // Fetch pump.fun coin data
@@ -273,7 +275,7 @@ export class PumpFunBondingCurveSwapStrategy implements ISwapStrategy {
         };
 
         return {
-            instructions: [instruction],
+            instructions: [...preparatoryInstructions, instruction],
             sendyFeeLamports: sendyFeeLamports,
             poolAddress: BONDING_CURVE // The bonding curve is the primary address interacted with
         };

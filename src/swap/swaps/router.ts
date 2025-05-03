@@ -88,12 +88,25 @@ export async function getSwapStrategy(
     // 1. Create temporary instances for canHandle checks
     const tempStrategies = strategyClasses.map(StrategyClass => {
         try {
+             const placeholderPubKey = new PublicKey('11111111111111111111111111111111'); 
             if (StrategyClass === RaydiumLaunchLabSwapStrategy) {
-                return new StrategyClass(dependencies.connection, dependencies.wallet, false);
-            } else {
-                // All others use (connection, wallet)
-                return new StrategyClass(dependencies.connection, dependencies.wallet);
-            }
+                 // Constructor: connection, wallet, poolId
+                 return new StrategyClass(dependencies.connection, dependencies.wallet, placeholderPubKey);
+             } else if (StrategyClass === RaydiumSwapStrategy) {
+                  // Constructor: connection, wallet
+                 return new StrategyClass(dependencies.connection, dependencies.wallet);
+             } else if (StrategyClass === PumpFunBondingCurveSwapStrategy) {
+                  // Constructor: connection, wallet
+                 return new StrategyClass(dependencies.connection, dependencies.wallet);
+             } else if (StrategyClass === MoonshotSwapStrategy) {
+                 // Constructor: connection, wallet
+                 return new StrategyClass(dependencies.connection, dependencies.wallet);
+             } else if (StrategyClass === PumpSwapStrategy) {
+                 // Constructor: connection, wallet
+                 return new StrategyClass(dependencies.connection, dependencies.wallet);
+             }
+             // Should not happen if all strategies are covered
+            throw new Error(`Unhandled strategy type during temp instantiation: ${StrategyClass.name}`);
         } catch (e) {
             console.warn(`Failed to create temporary instance for ${StrategyClass.name}:`, e);
             return null; 
@@ -119,22 +132,25 @@ export async function getSwapStrategy(
 
             // 4. Instantiate the *selected* strategy with proper arguments
             try {
-                if (SelectedStrategyClass === RaydiumLaunchLabSwapStrategy) {
-                    if (!pairAddress) {
-                        throw new Error('Launchpad Pool ID (pairAddress) is required for RaydiumLaunchLabSwapStrategy but was not provided.');
-                    }
-                    return new SelectedStrategyClass(
-                        dependencies.connection, 
-                        dependencies.wallet, 
-                        false
-                    );
-                } else {
-                    return new SelectedStrategyClass(dependencies.connection, dependencies.wallet);
-                }
+                 if (SelectedStrategyClass === RaydiumLaunchLabSwapStrategy) {
+                      return new SelectedStrategyClass(dependencies.connection, dependencies.wallet, new PublicKey(pairAddress));
+                 } else if (SelectedStrategyClass === RaydiumSwapStrategy) {
+                      return new SelectedStrategyClass(dependencies.connection, dependencies.wallet);
+                 } else if (SelectedStrategyClass === PumpFunBondingCurveSwapStrategy) {
+                      return new SelectedStrategyClass(dependencies.connection, dependencies.wallet);
+                 } else if (SelectedStrategyClass === MoonshotSwapStrategy) {
+                     return new SelectedStrategyClass(dependencies.connection, dependencies.wallet);
+                 } else if (SelectedStrategyClass === PumpSwapStrategy) {
+                     return new SelectedStrategyClass(dependencies.connection, dependencies.wallet);
+                 } else {
+                     // Should not happen if all strategies are covered
+                      throw new Error(`Unhandled strategy type during final instantiation: ${SelectedStrategyClass.name}`);
+                 }
             } catch (instantiationError) {
-                const errorMessage = instantiationError instanceof Error ? instantiationError.message : String(instantiationError);
-                console.error(`Failed to instantiate selected strategy ${SelectedStrategyClass.name}:`, errorMessage);
-                throw new Error(`Failed to instantiate strategy ${SelectedStrategyClass.name}: ${errorMessage}`);
+                 // Handle error with type check
+                 const errorMessage = instantiationError instanceof Error ? instantiationError.message : String(instantiationError);
+                 console.error(`Failed to instantiate selected strategy ${SelectedStrategyClass.name}:`, errorMessage);
+                 throw new Error(`Failed to instantiate strategy ${SelectedStrategyClass.name}: ${errorMessage}`);
             }
         } else if ('error' in result) {
             console.warn(`Strategy ${result.strategyClass.name} check failed:`, result.error);

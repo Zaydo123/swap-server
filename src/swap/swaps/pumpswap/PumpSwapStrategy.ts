@@ -3,14 +3,15 @@ import {
     Connection,
     TransactionInstruction,
     SystemProgram,
-    LAMPORTS_PER_SOL
+    LAMPORTS_PER_SOL,
 } from '@solana/web3.js';
 import {
     TOKEN_PROGRAM_ID,
     ASSOCIATED_TOKEN_PROGRAM_ID,
     getAssociatedTokenAddressSync,
     NATIVE_MINT,
-    createAssociatedTokenAccountInstruction
+    createAssociatedTokenAccountInstruction,
+    createSyncNativeInstruction
 } from '@solana/spl-token';
 import { BN } from "@coral-xyz/anchor";
 import { TransactionProps } from '../../swap';
@@ -65,7 +66,7 @@ export class PumpSwapStrategy implements ISwapStrategy {
             const pumpswapCheckURL = `https://swap-api.pump.fun/v1/pools/pump-pool?base=${mintAddress}`;
             console.log("Checking PumpSwapStrategy eligibility via API:", pumpswapCheckURL);
             const pumpswapResponse = await fetch(pumpswapCheckURL);
-
+    
             if (pumpswapResponse.ok) {
                 const data = await pumpswapResponse.json();
                 // Ensure the response contains the necessary pool address for swapping
@@ -96,6 +97,88 @@ export class PumpSwapStrategy implements ISwapStrategy {
         console.log('--- Generating PumpSwap Swap Instructions using Direct Transaction Building ---');
         const { connection } = dependencies;
         const { type, amount, amountIsInSol, slippage, userWalletAddress, mintAddress, pairAddress } = transactionDetails.params;
+
+        // Ensure the user has ATAs for input and output mints
+        const preparatoryInstructions: TransactionInstruction[] = [];
+        const mintsToEnsure = Array.from(new Set([mintAddress, "So11111111111111111111111111111111111111112"]))
+            .map((s) => new PublicKey(s));
+        await ensureUserTokenAccounts({
+            connection,
+            userPublicKey: new PublicKey(userWalletAddress),
+            mints: mintsToEnsure,
+            preparatoryInstructions
+        });
+
+        // --- WRAP SOL IF NEEDED (for buy with SOL) ---
+        if (type === 'buy' && amountIsInSol) {
+            const userQuoteTokenAccount = getAssociatedTokenAddressSync(
+                new PublicKey("So11111111111111111111111111111111111111112"),
+                new PublicKey(userWalletAddress)
+            );
+            const solAmountIn = BigInt(Math.floor(amount * LAMPORTS_PER_SOL));
+            const wsolAccountInfo = await connection.getAccountInfo(userQuoteTokenAccount);
+            let requiredLamports = solAmountIn;
+
+            if (!wsolAccountInfo) {
+                // Account does not exist, must fund with rent-exemption + swap amount
+                const rentExempt = await connection.getMinimumBalanceForRentExemption(165);
+                requiredLamports = solAmountIn + BigInt(rentExempt);
+            } else if (wsolAccountInfo.lamports < solAmountIn) {
+                // Account exists, but not enough lamports
+                requiredLamports = solAmountIn - BigInt(wsolAccountInfo.lamports);
+            } else {
+                requiredLamports = 0n; // Already enough
+            }
+
+            if (requiredLamports > 0n) {
+                preparatoryInstructions.push(
+                    SystemProgram.transfer({
+                        fromPubkey: new PublicKey(userWalletAddress),
+                        toPubkey: userQuoteTokenAccount,
+                        lamports: Number(requiredLamports),
+                    })
+                );
+                preparatoryInstructions.push(
+                    createSyncNativeInstruction(userQuoteTokenAccount)
+                );
+            }
+        }
+
+        // --- ENSURE WSOL ATA EXISTS FOR SELL (for receiving SOL as WSOL) ---
+        if (type === 'sell') {
+            const userWSOLAccount = getAssociatedTokenAddressSync(
+                NATIVE_MINT,
+                new PublicKey(userWalletAddress)
+            );
+            const wsolAccountInfo = await connection.getAccountInfo(userWSOLAccount);
+            if (!wsolAccountInfo) {
+                // If the WSOL ATA does not exist, create it and fund with rent-exemption only
+                const rentExempt = await connection.getMinimumBalanceForRentExemption(165);
+                preparatoryInstructions.push(
+                    createAssociatedTokenAccountInstruction(
+                        new PublicKey(userWalletAddress),
+                        userWSOLAccount,
+                        new PublicKey(userWalletAddress),
+                        NATIVE_MINT
+                    )
+                );
+                preparatoryInstructions.push(
+                    SystemProgram.transfer({
+                        fromPubkey: new PublicKey(userWalletAddress),
+                        toPubkey: userWSOLAccount,
+                        lamports: rentExempt,
+                    })
+                );
+                preparatoryInstructions.push(
+                    createSyncNativeInstruction(userWSOLAccount)
+                );
+            } else {
+                // If it exists, just sync it to ensure it's up to date
+                preparatoryInstructions.push(
+                    createSyncNativeInstruction(userWSOLAccount)
+                );
+            }
+        }
 
         // Fetch pool data for decimals and reserves
         let poolData: any;
@@ -248,37 +331,6 @@ export class PumpSwapStrategy implements ISwapStrategy {
         
         // Use hardcoded protocol fee recipient ATA from pumpswap.ts
         const protocolFeeRecipientTokenAccount = FEE_RECIPIENT_ATA;
-
-        // Prepare any necessary preliminary instructions
-        const preparatoryInstructions: TransactionInstruction[] = [];
-
-        // Ensure user has both base and quote token accounts (middleware)
-        await ensureUserTokenAccounts({
-            connection,
-            userPublicKey,
-            mints: [baseMint, quoteMint],
-            preparatoryInstructions
-        });
-
-        // For buy with SOL, we need to fund and sync the wrapped SOL account
-        if (type === 'buy') {
-            const syncNativeInstruction = new TransactionInstruction({
-                programId: TOKEN_PROGRAM_ID,
-                keys: [
-                    { pubkey: userQuoteTokenAccount, isSigner: false, isWritable: true },
-                ],
-                data: Buffer.from([17]) // 17 is the SyncNative instruction
-            });
-
-            const transferSolInstruction = SystemProgram.transfer({
-                fromPubkey: userPublicKey,
-                toPubkey: userQuoteTokenAccount,
-                lamports: Number(solAmount)
-            });
-
-            console.log(`Adding instructions to transfer ${Number(solAmount)} lamports to wrapped SOL account and sync it`);
-            preparatoryInstructions.push(transferSolInstruction, syncNativeInstruction);
-        }
 
         // Create instruction data with discriminator and amounts
         const instructionData = Buffer.alloc(24); // 8 bytes discriminator + 8 bytes for each u64 value

@@ -1,6 +1,6 @@
 import { TransactionProps } from '../../swap'; // Adjust path
 import { ISwapStrategy, GenerateInstructionsResult, SwapStrategyDependencies } from '../base/ISwapStrategy';
-import { RaydiumSwap } from '../../../raydium-generator'; // Corrected path
+import { RaydiumSwap } from '../../raydium-generator'; // Adjust path
 import { VersionedTransaction } from '@solana/web3.js';
 import { Raydium } from '@raydium-io/raydium-sdk-v2';
 import { NATIVE_MINT } from '@solana/spl-token';
@@ -117,7 +117,7 @@ export class RaydiumSwapStrategy implements ISwapStrategy {
 
         const raydiumSwap = new RaydiumSwap(
             heliusRpcUrl,
-            transactionDetails.secret || ''
+            transactionDetails.secret
         );
 
         console.log('Calling RaydiumSwap.getSwapTransaction with:', {

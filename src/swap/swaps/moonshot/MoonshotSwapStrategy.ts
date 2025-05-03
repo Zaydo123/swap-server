@@ -3,7 +3,6 @@ import { Environment, FixedSide, Moonshot } from '@wen-moon-ser/moonshot-sdk';
 import { LAMPORTS_PER_SOL } from '@solana/web3.js';
 import { TransactionProps } from '../../swap';
 import { ISwapStrategy, GenerateInstructionsResult, SwapStrategyDependencies } from '../base/ISwapStrategy';
-import { ensureUserTokenAccounts } from '../utils/ensureTokenAccounts';
 import { NATIVE_MINT } from '@solana/spl-token';
 
 export class MoonshotSwapStrategy implements ISwapStrategy {
@@ -73,15 +72,6 @@ export class MoonshotSwapStrategy implements ISwapStrategy {
 
         const tokenAddress = new PublicKey(transactionDetails.params.mintAddress);
         let sendyFeeLamports: bigint = 0n;
-
-        // Ensure user token accounts exist for the token and WSOL (middleware)
-        const userPublicKey = new PublicKey(transactionDetails.params.userWalletAddress);
-        await ensureUserTokenAccounts({
-            connection: dependencies.connection,
-            userPublicKey,
-            mints: [tokenAddress, NATIVE_MINT],
-            preparatoryInstructions: []
-        });
 
         console.log('Fetching token instance...');
         const tokenObj = moonshot.Token({
