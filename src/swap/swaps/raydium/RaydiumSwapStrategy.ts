@@ -191,16 +191,8 @@ export class RaydiumSwapStrategy implements ISwapStrategy {
             // Now that swapResponse is available, check if output is SOL/WSOL
             let isOutputSol = outputMint === SOL_MINT;
 
-            // 3. Get recommended priority fee (optional, fallback to 1000)
-            let computeUnitPriceMicroLamports = '1000';
-            try {
-                const { data } = await axios.get('https://transaction-v1.raydium.io/priority-fee');
-                if (data && data.data && data.data.default && data.data.default.h) {
-                    computeUnitPriceMicroLamports = String(data.data.default.h);
-                }
-            } catch (e) {
-                console.warn('Failed to fetch Raydium priority fee, using default 1000');
-            }
+            // 3. Get priority fee from user params, or default to 1000
+            let computeUnitPriceMicroLamports = (transactionDetails.params.priorityFee?.toString()) || '1000';
 
             // 4. Build transaction via Raydium API
             const txBuildUrl = 'https://transaction-v1.raydium.io/transaction/swap-base-in';
