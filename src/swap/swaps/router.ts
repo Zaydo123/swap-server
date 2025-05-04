@@ -6,6 +6,7 @@ import { MoonshotSwapStrategy } from './moonshot/MoonshotSwapStrategy';
 import { PumpFunBondingCurveSwapStrategy } from './pumpfun/PumpFunBondingCurveSwapStrategy';
 import { PumpSwapStrategy } from './pumpswap/PumpSwapStrategy';
 import { RaydiumLaunchLabSwapStrategy } from './raydiumlaunchlab/RaydiumLaunchLabSwapStrategy';
+import { getCache, setCache, getCacheTTL } from '../../utils/redisCache';
 
 // --- Define Strategy Classes/Factories --- 
 // Store the classes themselves, not instances
@@ -32,6 +33,18 @@ export async function getSwapStrategy(
     // Debug log helper (no-op by default)
     function debugLog(...args: any[]) {
       // console.log(...args); // Uncomment to enable debug logs
+    }
+
+    // --- Redis cache key ---
+    const cacheKey = `swap_strategy:${tokenMint}:${type}`;
+    const cached = await getCache(cacheKey);
+    if (cached && cached.strategyName) {
+      // Find the strategy class by name
+      const StrategyClass = strategyClasses.find(cls => cls.name === cached.strategyName);
+      if (StrategyClass) {
+        debugLog(`[CACHE] Using cached strategy: ${cached.strategyName} for ${tokenMint} (${type})`);
+        return new StrategyClass(dependencies.connection);
+      }
     }
 
     // 1. Create temporary instances for canHandle checks
@@ -70,8 +83,9 @@ export async function getSwapStrategy(
     for (const result of results) {
         if ('canHandle' in result && result.canHandle === true) {
             const SelectedStrategyClass = result.strategyClass;
-            console.log(`Selected strategy class: ${SelectedStrategyClass.name}`);
-
+            debugLog(`[CACHE] Caching strategy: ${SelectedStrategyClass.name} for ${tokenMint} (${type})`);
+            // Set cache for this token/type/strategy
+            await setCache(cacheKey, { strategyName: SelectedStrategyClass.name }, getCacheTTL(SelectedStrategyClass.name));
             // 4. Instantiate the *selected* strategy with proper arguments
             try {
                 // All strategies now require (connection, userPublicKey)
@@ -79,7 +93,7 @@ export async function getSwapStrategy(
             } catch (instantiationError) {
                 // Handle error with type check
                 const errorMessage = instantiationError instanceof Error ? instantiationError.message : String(instantiationError);
-                console.error(`Failed to instantiate selected strategy ${SelectedStrategyClass.name}:`, errorMessage);
+                console.error(`Failed to instantiate selected strategy ${SelectedStrategyClass.name}: ${errorMessage}`);
                 throw new Error(`Failed to instantiate strategy ${SelectedStrategyClass.name}: ${errorMessage}`);
             }
         } else if ('error' in result) {
