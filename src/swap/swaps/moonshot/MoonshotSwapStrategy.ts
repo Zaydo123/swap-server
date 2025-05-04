@@ -32,25 +32,41 @@ export class MoonshotSwapStrategy implements ISwapStrategy {
         // Further check: ensure it's not migrated, but allow handling even if API fails
         try {
             console.log("Checking MoonshotStrategy eligibility for:", tokenMint);
+            
+            // First try the moonshot API
             const response = await fetch(`https://api.moonshot.cc/token/v1/solana/${tokenMint}`);
             
-            if (!response.ok) {
-                // If API fails (e.g., 404), still return true for a .moon token.
-                // Let generateSwapInstructions handle the error more specifically.
-                console.warn(`MoonshotStrategy: Failed to fetch moonshot data (${response.status}), but allowing handle based on suffix.`);
-                return true; 
+            if (response.ok) {
+                const data = await response.json();
+                const isMigrated = data.moonshot?.progress == 100;
+
+                if (isMigrated) {
+                    console.log("MoonshotStrategy: Token is migrated, cannot handle.");
+                    return false; // Should be handled by Raydium or other strategy
+                } else {
+                    console.log("MoonshotStrategy: Token is not migrated, CAN handle.");
+                    return true; // Not migrated, this strategy applies
+                }
             }
             
-            const data = await response.json();
-            const isMigrated = data.moonshot.progress == 100;
-
-            if (isMigrated) {
-                console.log("MoonshotStrategy: Token is migrated, cannot handle.");
-                return false; // Should be handled by Raydium or other strategy
-            } else {
-                 console.log("MoonshotStrategy: Token is not migrated, CAN handle.");
-                return true; // Not migrated, this strategy applies
+            // If moonshot API failed, try checking with dexscreener API as fallback
+            const dexscreenerUrl = `https://api.dexscreener.com/latest/dex/tokens/${tokenMint}`;
+            const dexResponse = await fetch(dexscreenerUrl);
+            
+            if (dexResponse.ok) {
+                const dexData = await dexResponse.json();
+                // Check if we have pairs and if the first pair has moonshot data with progress 100
+                if (dexData.pairs && dexData.pairs.length > 0 && 
+                    dexData.pairs[0].moonshot && dexData.pairs[0].moonshot.progress === 100) {
+                    console.log("MoonshotStrategy: DexScreener shows token is migrated, cannot handle.");
+                    return false;
+                }
             }
+            
+            // If both APIs fail or don't confirm migration, allow handling based on suffix
+            console.warn(`MoonshotStrategy: Could not definitively confirm migration status, allowing handle based on suffix.`);
+            return true;
+                
         } catch (error) {
              console.error("MoonshotStrategy: Error during eligibility check:", error);
              // If there's a network/fetch error, still attempt to handle based on suffix.
@@ -84,7 +100,8 @@ export class MoonshotSwapStrategy implements ISwapStrategy {
             },
         });
 
-        const tokenAddress = new PublicKey(transactionDetails.params.inputMint);
+        const { inputMint, outputMint, type } = transactionDetails.params;
+        const tokenAddress = new PublicKey(type === 'buy' ? outputMint : inputMint);
         let sendyFeeLamports: bigint = 0n;
 
         console.log('Fetching token instance...');
@@ -100,64 +117,105 @@ export class MoonshotSwapStrategy implements ISwapStrategy {
 
         if (transactionDetails.params.type === 'buy') {
             if (transactionDetails.params.inputMint === NATIVE_MINT.toString()) {
-                const collateralLamports = BigInt(transactionDetails.params.amount) * BigInt(LAMPORTS_PER_SOL);
-                collateralAmount = collateralLamports; // Already bigint, integer
-                tokenAmount = await tokenObj.getTokenAmountByCollateral({
-                    collateralAmount,
-                    tradeDirection: 'BUY',
+                // Convert from SOL to lamports and then to BigInt
+                const solAmount = Number(transactionDetails.params.amount);
+                const collateralLamports = BigInt(Math.floor(solAmount * LAMPORTS_PER_SOL));
+                collateralAmount = collateralLamports;
+                
+                try {
+                    tokenAmount = await tokenObj.getTokenAmountByCollateral({
+                        collateralAmount,
+                        tradeDirection: 'BUY',
+                    });
+                } catch (error) {
+                    console.error("Error calculating token amount:", error);
+                    throw error;
+                }
+                
+                console.log('Moonshot BUY (SOL input):', {
+                    originalSolAmount: solAmount,
+                    convertedLamports: collateralLamports.toString()
                 });
             } else {
                 // Amount is in token units - Assuming 9 decimals for Moonshot tokens based on original code
                 const decimals = 9n;
-                tokenAmount = BigInt(transactionDetails.params.amount) * (10n ** decimals);
-                collateralAmount = await tokenObj.getCollateralAmountByTokens({
-                    tokenAmount,
-                    tradeDirection: 'BUY',
+                const tokenAmountNumber = Number(transactionDetails.params.amount);
+                tokenAmount = BigInt(Math.floor(tokenAmountNumber * (10 ** Number(decimals))));
+                
+                try {
+                    collateralAmount = await tokenObj.getCollateralAmountByTokens({
+                        tokenAmount,
+                        tradeDirection: 'BUY',
+                    });
+                } catch (error) {
+                    console.error("Error calculating collateral amount:", error);
+                    throw error;
+                }
+                
+                console.log('Moonshot BUY (Token output):', {
+                    originalTokenAmount: tokenAmountNumber,
+                    convertedTokenAmount: tokenAmount.toString()
                 });
             }
 
             // Calculate fee *after* determining final collateral amount
-            sendyFeeLamports = calculateSendyFee({ amountLamports: collateralAmount });
+            sendyFeeLamports = calculateSendyFee(collateralAmount);
 
-            const { ixs } = await tokenObj.prepareIxs({
-                slippageBps: transactionDetails.params.slippageBps,
-                creatorPK: transactionDetails.params.userWalletAddress,
-                tokenAmount,
-                collateralAmount,
-                tradeDirection: 'BUY',
-                fixedSide: transactionDetails.params.inputMint === NATIVE_MINT.toString() ? FixedSide.IN : FixedSide.OUT,
-            });
-            swapInstructions = ixs;
-            console.log('Moonshot BUY instructions prepared.');
+            try {
+                const { ixs } = await tokenObj.prepareIxs({
+                    slippageBps: transactionDetails.params.slippageBps,
+                    creatorPK: transactionDetails.params.userWalletAddress,
+                    tokenAmount,
+                    collateralAmount,
+                    tradeDirection: 'BUY',
+                    fixedSide: transactionDetails.params.inputMint === NATIVE_MINT.toString() ? FixedSide.IN : FixedSide.OUT,
+                });
+                swapInstructions = ixs;
+                console.log('Moonshot BUY instructions prepared.');
+            } catch (error) {
+                console.error("Error preparing BUY instructions:", error);
+                throw error;
+            }
         } else { // Sell
             // Assuming 9 decimals for Moonshot tokens based on original code
             const decimals = 9n;
-            tokenAmount = BigInt(transactionDetails.params.amount) * (10n ** decimals);
+            const tokenAmountNumber = Number(transactionDetails.params.amount);
+            tokenAmount = BigInt(Math.floor(tokenAmountNumber * (10 ** Number(decimals))));
 
             console.log('Moonshot token amount for selling:', {
-                originalAmount: transactionDetails.params.amount,
+                originalAmount: tokenAmountNumber,
                 convertedAmount: tokenAmount.toString(),
                 decimals: decimals.toString()
             });
 
-            collateralAmount = await tokenObj.getCollateralAmountByTokens({
-                tokenAmount,
-                tradeDirection: 'SELL',
-            });
+            try {
+                collateralAmount = await tokenObj.getCollateralAmountByTokens({
+                    tokenAmount,
+                    tradeDirection: 'SELL',
+                });
+            } catch (error) {
+                console.error("Error calculating SOL output:", error);
+                throw error;
+            }
 
             // Calculate fee based on collateral amount received
-            sendyFeeLamports = calculateSendyFee({ amountLamports: collateralAmount });
+            sendyFeeLamports = calculateSendyFee(collateralAmount);
 
-            const { ixs } = await tokenObj.prepareIxs({
-                slippageBps: transactionDetails.params.slippageBps,
-                creatorPK: transactionDetails.params.userWalletAddress,
-                tokenAmount, // Input amount is fixed
-                collateralAmount, // This will be the minimum collateral out based on slippage
-                tradeDirection: 'SELL',
-                fixedSide: FixedSide.IN, // FixedSide is IN for sell (fixing the input token amount)
-            });
-            swapInstructions = ixs;
-            console.log('Moonshot SELL instructions prepared.');
+            try {
+                const { ixs } = await tokenObj.prepareIxs({
+                    slippageBps: transactionDetails.params.slippageBps,
+                    creatorPK: transactionDetails.params.userWalletAddress,
+                    tokenAmount, // Input amount is fixed
+                    collateralAmount, // This will be the minimum collateral out based on slippage
+                    tradeDirection: 'SELL',
+                    fixedSide: FixedSide.IN, // FixedSide is IN for sell (fixing the input token amount)
+                });
+                swapInstructions = ixs;
+                console.log('Moonshot SELL instructions prepared.');
+            } catch (error) {
+                console.error("Error preparing SELL instructions:", error);
+                throw error;
+            }
         }
 
         // --- Fee Transfer Instruction ---
@@ -182,6 +240,23 @@ export class MoonshotSwapStrategy implements ISwapStrategy {
             userPublicKey: new PublicKey(transactionDetails.params.userWalletAddress),
             instructions: allInstructions
         });
+
+        // Add close token account instruction if selling all tokens
+        // The Moonshot SDK may already include a close instruction, 
+        // so we need to be careful not to add a duplicate one
+        if (transactionDetails.params.type === 'sell') {
+            // Skip adding our own close instruction for now
+            // The CloseAccount instruction in the transaction is failing
+            // Most likely because the Moonshot SDK is adding its own close instruction
+            // but in an order that doesn't work correctly
+            
+            console.log('Skipping token account close instruction for Moonshot - letting the swap handle token management');
+            
+            // If we need to add back the close account logic in the future, we should ensure:
+            // 1. The account being closed is actually empty
+            // 2. We're not adding a duplicate close instruction for the same account
+            // 3. The close instruction comes after all token transfers
+        }
 
         return {
             success: true,

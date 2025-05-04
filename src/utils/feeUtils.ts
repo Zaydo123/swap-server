@@ -1,13 +1,14 @@
 import { PublicKey, SystemProgram, TransactionInstruction } from '@solana/web3.js';
+import { LAMPORTS_PER_SOL } from '@solana/web3.js';
 
 /**
- * Calculates the Sendy fee as a percentage (basis points) of the given lamport amount.
- * @param amountLamports - The base amount in lamports
- * @param feeBps - The fee in basis points (e.g. 100 = 1%)
- * @returns bigint fee amount
+ * Calculates the Sendy fee as a simple 1% of SOL amount
+ * @param solAmount - The SOL amount in lamports
+ * @returns Fee amount in lamports
  */
-export function calculateSendyFee({ amountLamports, feeBps = 100 }:{ amountLamports: bigint, feeBps?: number }): bigint {
-  return (amountLamports * BigInt(feeBps)) / 10000n;
+export function calculateSendyFee(solAmount: bigint): bigint {
+  // Simple 1% fee
+  return solAmount / 100n;
 }
 
 /**

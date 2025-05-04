@@ -29,7 +29,7 @@ export async function getSwapStrategy(
     const tempStrategies = strategyClasses.map(StrategyClass => {
         try {
             // All strategies now require (connection, userPublicKey)
-            return new StrategyClass(dependencies.connection, new PublicKey(transactionDetails.params.userWalletAddress));
+            return new StrategyClass(dependencies.connection);
         } catch (e) {
             console.warn(`Failed to create temporary instance for ${StrategyClass.name}:`, e);
             return null; 
@@ -56,7 +56,7 @@ export async function getSwapStrategy(
             // 4. Instantiate the *selected* strategy with proper arguments
             try {
                 // All strategies now require (connection, userPublicKey)
-                return new SelectedStrategyClass(dependencies.connection, new PublicKey(transactionDetails.params.userWalletAddress));
+                return new SelectedStrategyClass(dependencies.connection);
             } catch (instantiationError) {
                 // Handle error with type check
                 const errorMessage = instantiationError instanceof Error ? instantiationError.message : String(instantiationError);

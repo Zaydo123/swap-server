@@ -96,6 +96,13 @@ export class RaydiumSwap {
     }
     this.connection = new Connection(RPC_URL, 'confirmed');
 
+    // Monkey-patch to log all outgoing RPC requests for debugging
+    const originalRpcRequest = (this.connection as any)._rpcRequest.bind(this.connection);
+    (this.connection as any)._rpcRequest = async (method: string, args: any[]) => {
+      console.log("[Solana RPC] Outgoing RPC:", method, args);
+      return originalRpcRequest(method, args);
+    };
+
     try {
       if (!WALLET_SECRET_KEY) {
         throw new Error('WALLET_SECRET_KEY is not provided');

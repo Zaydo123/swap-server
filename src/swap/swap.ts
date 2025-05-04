@@ -68,6 +68,18 @@ export async function generateAndCompileTransaction(
       console.log('Skipping compute budget instructions (priorityFee <= 0)');
   }
 
+  // --- 1.5 Fee Transfer Instruction (Add if needed) --- //
+  if (feeLamports > 0) {
+    console.log(`Prepending Sendy fee transfer IX: ${feeLamports} lamports`);
+    allInstructions.push(SystemProgram.transfer({
+      fromPubkey: userPublicKey,
+      toPubkey: CNST.SENDY_FEE_ACCOUNT, // Use constant from constants.ts
+      lamports: feeLamports
+    }));
+  } else {
+    console.log('Skipping Sendy fee transfer (feeLamports <= 0)');
+  }
+
   // --- 2. Append all strategy-provided instructions --- //
   // These should include: ATA creation, fee transfer, swap instructions
   allInstructions.push(...swapInstructions);

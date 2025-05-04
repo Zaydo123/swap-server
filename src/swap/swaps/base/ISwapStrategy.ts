@@ -1,4 +1,4 @@
-import { Connection, PublicKey, TransactionInstruction, AddressLookupTableAccount, VersionedTransaction } from '@solana/web3.js';
+import { Connection, PublicKey, TransactionInstruction, AddressLookupTableAccount, VersionedTransaction, Keypair } from '@solana/web3.js';
 
 // Single source of truth for transaction parameters
 export interface TransactionProps {
@@ -17,6 +17,7 @@ export interface TransactionProps {
 export interface SwapStrategyDependencies {
   connection: Connection;
   rpcUrl: string;
+  userPublicKey: PublicKey;
   // Add other dependencies needed by strategies, e.g., Moonshot instance
 }
 
@@ -34,6 +35,8 @@ export interface GenerateInstructionsResult {
   /** The address of the primary pool or curve being interacted with. */
   poolAddress?: PublicKey;
   addressLookupTables?: AddressLookupTableAccount[];
+  /** Pre-built versioned transaction (when using Raydium API) */
+  versionedTransaction?: VersionedTransaction;
 }
 
 export interface ISwapStrategy {

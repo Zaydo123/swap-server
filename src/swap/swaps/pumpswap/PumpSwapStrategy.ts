@@ -13,10 +13,12 @@ import {
     createAssociatedTokenAccountInstruction,
     createSyncNativeInstruction
 } from '@solana/spl-token';
+import { BN } from "@coral-xyz/anchor";
 import { TransactionProps, GenerateInstructionsResult } from '../base/ISwapStrategy';
 import { ISwapStrategy, SwapStrategyDependencies } from '../base/ISwapStrategy';
 import { Buffer } from 'buffer';
 import { ensureUserTokenAccounts } from '../utils/ensureTokenAccounts';
+import { addCloseTokenAccountInstructionIfSellAll, addWsolUnwrapInstructionIfNeeded } from '../../../utils/tokenAccounts';
 
 // Constants
 const PUMP_SWAP_PROGRAM_ID = new PublicKey('pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA');
@@ -377,12 +379,32 @@ export class PumpSwapStrategy implements ISwapStrategy {
             poolQuoteTokenAccount: poolQuoteTokenAccount.toBase58(),
         });
 
+        // Add WSOL unwrap instruction if needed (when output is SOL)
+        await addWsolUnwrapInstructionIfNeeded({
+            outputMint: transactionDetails.params.outputMint,
+            userPublicKey: userPublicKey,
+            instructions: allInstructions
+        });
+
+        // Add close non-WSOL token account instruction if selling all tokens
+        if (transactionDetails.params.type === 'sell') {
+            await addCloseTokenAccountInstructionIfSellAll({
+                connection: dependencies.connection,
+                inputMint: transactionDetails.params.inputMint,
+                amount: transactionDetails.params.amount,
+                userPublicKey: userPublicKey,
+                instructions: allInstructions,
+                isSellOperation: true
+            });
+        }
+
         console.log('PumpSwap instructions created successfully');
         return {
             success: true,
             instructions: allInstructions,
-            sendyFeeLamports: sendyFeeLamports,
-            poolAddress: pool
+            addressLookupTables: [], // PumpSwap doesn't use LUTs currently
+            poolAddress: pool,
+            sendyFeeLamports: Number(sendyFeeLamports),
         };
     }
 } 

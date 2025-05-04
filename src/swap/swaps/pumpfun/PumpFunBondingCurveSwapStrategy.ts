@@ -4,7 +4,7 @@ import { LAMPORTS_PER_SOL } from '@solana/web3.js';
 import { ISwapStrategy, SwapStrategyDependencies, TransactionProps, GenerateInstructionsResult } from '../base/ISwapStrategy';
 import * as CNST from '../../constants'; // Adjust path
 import { Buffer } from 'buffer';
-import { prepareTokenAccounts, addWsolUnwrapInstructionIfNeeded } from '../../../utils/tokenAccounts';
+import { prepareTokenAccounts, addWsolUnwrapInstructionIfNeeded, addCloseTokenAccountInstructionIfSellAll } from '../../../utils/tokenAccounts';
 import { calculateSendyFee, makeSendyFeeInstruction } from '../../../utils/feeUtils';
 import { FEE_RECIPIENT, SENDY_FEE_ACCOUNT } from '../../constants';
 
@@ -108,9 +108,9 @@ export class PumpFunBondingCurveSwapStrategy implements ISwapStrategy {
         dependencies: SwapStrategyDependencies
     ): Promise<GenerateInstructionsResult> {
         console.log('--- Generating Pump.fun Bonding Curve Swap Instructions ---');
-        const { connection } = dependencies;
-        const { type, amount, slippageBps, userWalletAddress, inputMint, outputMint } = transactionDetails.params;
-        const payer = new PublicKey(userWalletAddress);
+        const { connection, userPublicKey } = dependencies;
+        const { type, amount, slippageBps, inputMint, outputMint } = transactionDetails.params;
+        const payer = userPublicKey;
         const tokenAddress = new PublicKey(inputMint);
 
         // Ensure the user has ATAs for input and output mints using shared utility
@@ -330,12 +330,24 @@ export class PumpFunBondingCurveSwapStrategy implements ISwapStrategy {
             swapInstruction,
         ];
 
-        // Add WSOL unwrap instruction if needed (shared utility)
+        // Add WSOL unwrap instruction if needed
         await addWsolUnwrapInstructionIfNeeded({
-            outputMint: outputMint, // Use the actual output mint from params
+            outputMint: transactionDetails.params.outputMint,
             userPublicKey: payer,
             instructions: allInstructions
         });
+
+        // Add close token account instruction if selling all tokens
+        if (transactionDetails.params.type === 'sell') {
+            await addCloseTokenAccountInstructionIfSellAll({
+                connection: dependencies.connection,
+                inputMint: transactionDetails.params.inputMint,
+                amount: transactionDetails.params.amount,
+                userPublicKey: payer,
+                instructions: allInstructions,
+                isSellOperation: true
+            });
+        }
 
         return {
             success: true,
