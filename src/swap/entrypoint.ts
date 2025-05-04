@@ -29,8 +29,7 @@ if (!_Connection.__patchedForLogging) {
 }
 
 export async function handleSwapRequest(req: Request, res: Response): Promise<void> {
-    console.log('Received swap request:', req.body);
-
+    // console.log('Received swap request:', req.body);
     // Access request body correctly - assuming params are directly in body or nested
     // Adjust this based on actual request structure if needed
     const paramsFromBody = req.body.params || req.body; // Adapt as necessary

@@ -7,15 +7,10 @@ import { prepareTokenAccounts } from '../../../utils/tokenAccounts';
 import { calculateSendyFee, makeSendyFeeInstruction } from '../../../utils/feeUtils';
 import { addWsolUnwrapInstructionIfNeeded, addCloseTokenAccountInstructionIfSellAll } from '../../../utils/tokenAccounts';
 import { SENDY_FEE_ACCOUNT } from '../../constants';
-import { Token, TokenAmount } from '@raydium-io/raydium-sdk-v2';
-import { toApiV3Token, toFeeConfig } from '@raydium-io/raydium-sdk-v2';
-import { Router } from '@raydium-io/raydium-sdk-v2';
-import { TxVersion } from '@raydium-io/raydium-sdk-v2';
 import { LAMPORTS_PER_SOL } from '@solana/web3.js';
 import axios from 'axios';
 import { VersionedTransaction } from '@solana/web3.js';
 import { getAssociatedTokenAddress, createCloseAccountInstruction } from '@solana/spl-token';
-import { AddressLookupTableAccount } from '@solana/web3.js';
 import { TransactionMessage, MessageV0 } from '@solana/web3.js';
 
 // Cache for pool data to improve performance
@@ -26,11 +21,11 @@ const POOL_CACHE_TTL = 1000 * 60 * 2; // 2 minutes
 // Helper function to get token decimals
 async function getTokenDecimals(connection: Connection, mint: PublicKey): Promise<number> {
   try {
-    console.log(`Fetching decimals for token: ${mint.toBase58()}`);
+    // console.log(`Fetching decimals for token: ${mint.toBase58()}`);
     const info = await connection.getParsedAccountInfo(mint);
     const data = (info.value?.data as any)?.parsed;
     if (data?.type === 'mint') {
-      console.log(`Found decimals: ${data.info.decimals} for token ${mint.toBase58()}`);
+      // console.log(`Found decimals: ${data.info.decimals} for token ${mint.toBase58()}`);
       return data.info.decimals;
     }
     console.warn(`Could not parse decimals for ${mint.toBase58()}, using default of 9`);
@@ -51,16 +46,16 @@ export class RaydiumSwapStrategy implements ISwapStrategy {
     ): Promise<boolean> {
         const { inputMint, outputMint, type } = transactionDetails.params;
         const tokenMint = type === 'buy' ? outputMint : inputMint;
-        console.log("Checking RaydiumStrategy eligibility for token mint:", tokenMint);
+        // console.log("Checking RaydiumStrategy eligibility for token mint:", tokenMint);
 
         // Check for Pump.fun tokens first
         if (tokenMint.toLowerCase().includes('pump')) {
-            console.log(`RaydiumStrategy: Detected pump token ${tokenMint}, checking details...`);
+            // console.log(`RaydiumStrategy: Detected pump token ${tokenMint}, checking details...`);
             try {
                 const dataURL = `https://frontend-api-v3.pump.fun/coins/${tokenMint}`;
                 const response = await fetch(dataURL);
                 if (!response.ok) {
-                    console.warn(`RaydiumStrategy: Failed to fetch pump.fun data for ${tokenMint} (${response.status}). Rejecting.`);
+                    // console.warn(`RaydiumStrategy: Failed to fetch pump.fun data for ${tokenMint} (${response.status}). Rejecting.`);
                     return false; // Cannot verify, reject
                 }
                 const data = await response.json();
@@ -71,51 +66,51 @@ export class RaydiumSwapStrategy implements ISwapStrategy {
                 const isBeforeCutoff = createdTimestamp && createdTimestamp < 1742234121000;
 
                 if (hasRaydiumPool && isBeforeCutoff) {
-                    console.log(`RaydiumStrategy: Pump token ${tokenMint} has Raydium pool (${data.raydium_pool}) and created before cutoff (${new Date(createdTimestamp).toISOString()}). CAN handle.`);
+                    // console.log(`RaydiumStrategy: Pump token ${tokenMint} has Raydium pool (${data.raydium_pool}) and created before cutoff (${new Date(createdTimestamp).toISOString()}). CAN handle.`);
                     return true; // Old, migrated pump token with a Raydium pool
                 } else {
-                    console.log(`RaydiumStrategy: Pump token ${tokenMint} does not meet Raydium criteria (hasRaydiumPool: ${hasRaydiumPool}, isBeforeCutoff: ${isBeforeCutoff}). Rejecting.`);
+                    // console.log(`RaydiumStrategy: Pump token ${tokenMint} does not meet Raydium criteria (hasRaydiumPool: ${hasRaydiumPool}, isBeforeCutoff: ${isBeforeCutoff}). Rejecting.`);
                     return false; // Newer pump token or one without Raydium pool
                 }
             } catch (error) {
-                console.error(`RaydiumStrategy: Error checking pump.fun details for ${tokenMint}:`, error);
+                // console.error(`RaydiumStrategy: Error checking pump.fun details for ${tokenMint}:`, error);
                 return false; // Error during check, reject
             }
         }
 
         // Check for Moonshot tokens
         if (tokenMint.toLowerCase().includes('moon')) {
-            console.log(`RaydiumStrategy: Detected moon token ${tokenMint}, checking migration...`);
+            // console.log(`RaydiumStrategy: Detected moon token ${tokenMint}, checking migration...`);
             try {
                 const response = await fetch(`https://api.moonshot.cc/token/v1/solana/${tokenMint}`);
                  if (!response.ok) {
-                    console.warn(`RaydiumStrategy: Failed to fetch moonshot data for ${tokenMint} (${response.status}). Rejecting.`);
+                    // console.warn(`RaydiumStrategy: Failed to fetch moonshot data for ${tokenMint} (${response.status}). Rejecting.`);
                     return false; // Cannot verify, reject
                 }
                 const data = await response.json();
                 const isMigrated = data?.moonshot?.progress === 100;
 
                 if (isMigrated) {
-                    console.log(`RaydiumStrategy: Moon token ${tokenMint} is fully migrated. CAN handle.`);
+                    // console.log(`RaydiumStrategy: Moon token ${tokenMint} is fully migrated. CAN handle.`);
                     
                     // Check if it has a pairAddress we can use
                     if (data.pairAddress) {
-                        console.log(`RaydiumStrategy: Migrated moon token has pairAddress: ${data.pairAddress}`);
+                        // console.log(`RaydiumStrategy: Migrated moon token has pairAddress: ${data.pairAddress}`);
                     }
                     
                     return true; // Raydium handles fully migrated Moonshot tokens
                 } else {
-                    console.log(`RaydiumStrategy: Moon token ${tokenMint} is not fully migrated (progress: ${data?.moonshot?.progress}%). Rejecting.`);
+                    // console.log(`RaydiumStrategy: Moon token ${tokenMint} is not fully migrated (progress: ${data?.moonshot?.progress}%). Rejecting.`);
                     return false; // MoonshotSwapStrategy handles non-migrated tokens
                 }
             } catch (error) {
-                console.error(`RaydiumStrategy: Error checking moonshot details for ${tokenMint}:`, error);
+                // console.error(`RaydiumStrategy: Error checking moonshot details for ${tokenMint}:`, error);
                 return false; // Error during check, reject
             }
         }
 
         // Final check: Verify if the token exists on standard Raydium pools
-        console.log(`RaydiumStrategy: Performing final check for ${tokenMint} on standard Raydium pools...`);
+        // console.log(`RaydiumStrategy: Performing final check for ${tokenMint} on standard Raydium pools...`);
         try {
             // Initialize Raydium SDK instance for the check
             const raydium = await Raydium.load({ 
@@ -132,15 +127,15 @@ export class RaydiumSwapStrategy implements ISwapStrategy {
 
             // Check if pool data was found
             if (poolInfo && poolInfo.data && poolInfo.data.length > 0) {
-                 console.log(`RaydiumStrategy: Standard Raydium pool found for ${tokenMint}. CAN handle.`);
+                // console.log(`RaydiumStrategy: Standard Raydium pool found for ${tokenMint}. CAN handle.`);
                  return true;
             } else {
-                console.log(`RaydiumStrategy: No standard Raydium pool found for ${tokenMint} via SDK. Rejecting.`);
+                // console.log(`RaydiumStrategy: No standard Raydium pool found for ${tokenMint} via SDK. Rejecting.`);
                 return false;
             }
         } catch (error) {
-             console.error(`RaydiumStrategy: Error during final Raydium pool check for ${tokenMint}:`, error);
-             return false; // Error during check, reject
+            // console.error(`RaydiumStrategy: Error during final Raydium pool check for ${tokenMint}:`, error);
+            return false; // Error during check, reject
         }
     }
 
@@ -176,18 +171,18 @@ export class RaydiumSwapStrategy implements ISwapStrategy {
             if (isInputSol) {
                 // SOL uses 9 decimals (1 SOL = 1,000,000,000 lamports)
                 amountInBaseUnits = Math.floor(Number(amount) * LAMPORTS_PER_SOL);
-                console.log(`Using SOL amount: ${amount} SOL = ${amountInBaseUnits} lamports`);
+                // console.log(`Using SOL amount: ${amount} SOL = ${amountInBaseUnits} lamports`);
             } else {
                 // For token input, get the correct decimals
                 const inputMintPubkey = new PublicKey(inputMint);
                 const decimals = await getTokenDecimals(connection, inputMintPubkey);
                 amountInBaseUnits = Math.floor(Number(amount) * Math.pow(10, decimals));
-                console.log(`Using ${decimals} decimals for token ${inputMint}, ${amount} tokens = ${amountInBaseUnits} base units`);
+                // console.log(`Using ${decimals} decimals for token ${inputMint}, ${amount} tokens = ${amountInBaseUnits} base units`);
             }
 
             // 2. Get quote from Raydium API
             const quoteUrl = `https://transaction-v1.raydium.io/compute/swap-base-in?inputMint=${inputMint}&outputMint=${outputMint}&amount=${amountInBaseUnits}&slippageBps=${slippageBps}&txVersion=${txVersion}`;
-            console.log('[Raydium API] GET', quoteUrl);
+            // console.log('[Raydium API] GET', quoteUrl);
             const { data: swapResponse } = await axios.get(quoteUrl);
             if (!swapResponse || !swapResponse.data) {
                 return { success: false, error: 'Failed to get quote from Raydium API.' };
@@ -228,7 +223,7 @@ export class RaydiumSwapStrategy implements ISwapStrategy {
                 const ata = await getAssociatedTokenAddress(new PublicKey(outputMint), userPublicKey);
                 txBuildBody.outputAccount = ata.toBase58();
             }
-            console.log('[Raydium API] POST', txBuildUrl, txBuildBody);
+            // console.log('[Raydium API] POST', txBuildUrl, txBuildBody);
             const { data: swapTransactions } = await axios.post(txBuildUrl, txBuildBody);
             if (!swapTransactions || !swapTransactions.data || !swapTransactions.data[0] || !swapTransactions.data[0].transaction) {
                 return { success: false, error: 'Failed to get transaction from Raydium API.' };
@@ -244,19 +239,19 @@ export class RaydiumSwapStrategy implements ISwapStrategy {
             if (isInputSol && swapResponse.data.inputAmount) { // Fee on INPUT SOL for buys
                 try {
                     feeLamports = Math.floor(Number(swapResponse.data.inputAmount) * 0.01);
-                    console.log(`Charging 1% fee on SOL input: ${feeLamports / LAMPORTS_PER_SOL} SOL`);
+                    // console.log(`Charging 1% fee on SOL input: ${feeLamports / LAMPORTS_PER_SOL} SOL`);
                 } catch (e) {
-                    console.error('Error calculating buy fee from inputAmount:', e);
+                    // console.error('Error calculating buy fee from inputAmount:', e);
                 }
             } else if (!isInputSol && swapResponse.data.outputAmount) { // Fee on OUTPUT SOL for sells
                 try {
                     feeLamports = Math.floor(Number(swapResponse.data.outputAmount) * 0.01);
-                    console.log(`Charging 1% fee on SOL output: ${feeLamports / LAMPORTS_PER_SOL} SOL`);
+                    // console.log(`Charging 1% fee on SOL output: ${feeLamports / LAMPORTS_PER_SOL} SOL`);
                 } catch (e) {
-                    console.error('Error calculating sell fee from outputAmount:', e);
+                    // console.error('Error calculating sell fee from outputAmount:', e);
                 }
             } else {
-                console.log('Could not determine fee: input/output amount missing or not a SOL swap.');
+                // console.log('Could not determine fee: input/output amount missing or not a SOL swap.');
             }
             
             // Ensure fee is an integer
@@ -314,7 +309,7 @@ export class RaydiumSwapStrategy implements ISwapStrategy {
                     });
                     
                     if (feeIx) {
-                        console.log(`Adding fee instruction of ${feeLamports} lamports to transaction`);
+                        // console.log(`Adding fee instruction of ${feeLamports} lamports to transaction`);
                         allInstructions.push(feeIx);
                     }
                 }
@@ -341,10 +336,10 @@ export class RaydiumSwapStrategy implements ISwapStrategy {
                             const buffer = balanceRaw * 0.001;
                             const isSellAll = amountRaw >= balanceRaw - buffer;
                             
-                            console.log(`Checking if sell all: ${inputMint} - Selling: ${amountRaw}, Balance: ${balanceRaw}, Is sell all: ${isSellAll}`);
+                            // console.log(`Checking if sell all: ${inputMint} - Selling: ${amountRaw}, Balance: ${balanceRaw}, Is sell all: ${isSellAll}`);
                             
                             if (isSellAll) {
-                                console.log(`Adding close account instruction for token ${inputMint} (selling all tokens)`);
+                                // console.log(`Adding close account instruction for token ${inputMint} (selling all tokens)`);
                                 
                                 // Add close account instruction
                                 const closeIx = createCloseAccountInstruction(
@@ -357,7 +352,7 @@ export class RaydiumSwapStrategy implements ISwapStrategy {
                             }
                         }
                     } catch (error) {
-                        console.error("Error checking/adding close account instruction:", error);
+                        // console.error("Error checking/adding close account instruction:", error);
                     }
                 }
                 
@@ -399,7 +394,7 @@ export class RaydiumSwapStrategy implements ISwapStrategy {
         type: string
     ): Promise<GenerateInstructionsResult> {
         try {
-            console.log(`Executing Raydium swap for pool: ${poolId}`);
+            // console.log(`Executing Raydium swap for pool: ${poolId}`);
             
             // Fetch pool info (SDK returns { poolInfo, poolKeys, poolRpcData })
             const { poolInfo, poolKeys, poolRpcData } = await raydium.liquidity.getPoolInfoFromRpc({ poolId });

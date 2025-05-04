@@ -7,6 +7,12 @@ import { Buffer } from 'buffer';
 import { prepareTokenAccounts, addWsolUnwrapInstructionIfNeeded, addCloseTokenAccountInstructionIfSellAll } from '../../../utils/tokenAccounts';
 import { calculateSendyFee, makeSendyFeeInstruction } from '../../../utils/feeUtils';
 import { FEE_RECIPIENT, SENDY_FEE_ACCOUNT } from '../../constants';
+import { fetchWithRetry } from '../../utils/fetchWithRetry';
+
+// Debug log helper (no-op by default)
+function debugLog(...args: any[]) {
+  // console.log(...args); // Uncomment to enable debug logs
+}
 
 // Helper from original swap.ts - move to utils later?
 function bufferFromUInt64(value: number | string) {
@@ -36,28 +42,28 @@ export class PumpFunBondingCurveSwapStrategy implements ISwapStrategy {
         // EndsWith check removed as router might handle non-pump tokens first
 
         try {
-            console.log("Checking PumpFunBondingCurveStrategy eligibility for:", tokenMint);
+            debugLog("Checking PumpFunBondingCurveStrategy eligibility for:", tokenMint);
 
             // Fetch necessary data using helper (assuming router pre-caches)
             // Use helper functions defined in router.ts context or pass cache/fetchers via dependencies
             // For now, directly fetch here, but caching in router is better
             const pumpswapCheckURL = `https://swap-api.pump.fun/v1/pools/pump-pool?base=${tokenMint}`;
-            const pumpswapResponse = await fetch(pumpswapCheckURL);
+            const pumpswapResponse = await fetchWithRetry(pumpswapCheckURL);
 
             // 1. Check if bonded to pumpswap (if so, this strategy is NOT applicable)
             if (pumpswapResponse.ok) {
-                console.log("Pump token is bonded to pumpswap, PumpFunBondingCurveStrategy cannot handle.");
+                debugLog("Pump token is bonded to pumpswap, PumpFunBondingCurveStrategy cannot handle.");
                 return false; // Handled by PumpSwapStrategy
             } else if (pumpswapResponse.status !== 404) {
-                console.warn('Error checking pumpswap status for eligibility:', pumpswapResponse.status, await pumpswapResponse.text());
+                debugLog('Error checking pumpswap status for eligibility:', pumpswapResponse.status, await pumpswapResponse.text());
                 // Treat API errors as potentially handleable by this strategy if pump swap fails, but log warning
             }
 
             // 2. Fetch pump.fun coin data
             const dataURL = `https://frontend-api-v3.pump.fun/coins/${tokenMint}`;
-            const response = await fetch(dataURL);
+            const response = await fetchWithRetry(dataURL);
             if (!response.ok) {
-                 console.error(`Failed to fetch pump.fun coin data for eligibility check (${response.status})`);
+                 debugLog(`Failed to fetch pump.fun coin data for eligibility check (${response.status})`);
                  // If we can't get data, we can't confirm it's a bonding curve pump token
                  return false;
             }
@@ -66,30 +72,30 @@ export class PumpFunBondingCurveSwapStrategy implements ISwapStrategy {
             try {
                 data = await response.json();
             } catch (parseError) {
-                console.error(`Error parsing JSON from pump.fun API for ${tokenMint}:`, parseError);
+                debugLog(`Error parsing JSON from pump.fun API for ${tokenMint}:`, parseError);
                 // If the response isn't valid JSON, it's not a valid pump.fun token for this strategy
                 return false;
             }
 
              // Basic validation of essential bonding curve data
             if (!data.bonding_curve || !data.associated_bonding_curve || !data.mint || data.mint !== tokenMint) {
-                console.log("PumpFunBondingCurveStrategy: Incomplete or mismatched pump.fun coin data.");
+                debugLog("PumpFunBondingCurveStrategy: Incomplete or mismatched pump.fun coin data.");
                 return false; // Not a valid pump token for bonding curve interaction
             }
 
             // 3. Check if it has a Raydium pool AND was created BEFORE the cutoff
              const createdBeforeThreshold = data.created_timestamp && data.created_timestamp < PUMP_FUN_RAYDIUM_CUTOFF_TIMESTAMP;
             if (data.raydium_pool && createdBeforeThreshold) {
-                console.log("Pump token has Raydium pool and is old, PumpFunBondingCurveStrategy cannot handle (should use Raydium).");
+                debugLog("Pump token has Raydium pool and is old, PumpFunBondingCurveStrategy cannot handle (should use Raydium).");
                 return false; // Should be handled by Raydium strategy
             }
 
             // If not bonded to pumpswap, has valid bonding curve data, and doesn't meet Raydium criteria, use bonding curve.
-            console.log("PumpFunBondingCurveStrategy CAN handle this token.");
+            debugLog("PumpFunBondingCurveStrategy CAN handle this token.");
             return true;
 
         } catch (error) {
-            console.error('Error during PumpFunBondingCurveStrategy eligibility check:', error);
+            debugLog('Error during PumpFunBondingCurveStrategy eligibility check:', error);
             return false;
         }
     }
@@ -107,7 +113,7 @@ export class PumpFunBondingCurveSwapStrategy implements ISwapStrategy {
         transactionDetails: TransactionProps,
         dependencies: SwapStrategyDependencies
     ): Promise<GenerateInstructionsResult> {
-        console.log('--- Generating Pump.fun Bonding Curve Swap Instructions ---');
+        debugLog('--- Generating Pump.fun Bonding Curve Swap Instructions ---');
         const { connection, userPublicKey } = dependencies;
         const { type, amount, slippageBps, inputMint, outputMint } = transactionDetails.params;
         const payer = userPublicKey;
@@ -134,7 +140,7 @@ export class PumpFunBondingCurveSwapStrategy implements ISwapStrategy {
         const dataURL = `https://frontend-api-v3.pump.fun/coins/${tokenMint}`;
         let data: any;
         try {
-            const response = await fetch(dataURL);
+            const response = await fetchWithRetry(dataURL);
             if (!response.ok) {
                 throw new Error(`Failed to fetch pump.fun coin data: ${response.statusText}`);
             }
@@ -142,15 +148,15 @@ export class PumpFunBondingCurveSwapStrategy implements ISwapStrategy {
             try {
                 data = JSON.parse(rawText);
             } catch (parseError) {
-                console.error("Error parsing JSON from pump.fun API for", tokenMint, ":", parseError);
-                console.error("Raw response was:", rawText);
+                debugLog("Error parsing JSON from pump.fun API for", tokenMint, ":", parseError);
+                debugLog("Raw response was:", rawText);
                 return {
                     success: false,
                     error: `Pump.fun API returned invalid data for token ${tokenMint}. Please try again later or with a different token.`
                 };
             }
         } catch (error) {
-            console.error("Error fetching pump.fun data for instruction generation:", error);
+            debugLog("Error fetching pump.fun data for instruction generation:", error);
             return {
                 success: false,
                 error: `Could not fetch data for pump.fun token ${tokenMint}: ${error instanceof Error ? error.message : String(error)}`
@@ -182,9 +188,9 @@ export class PumpFunBondingCurveSwapStrategy implements ISwapStrategy {
                 throw new Error('Could not parse decimal info from mint account.');
             }
             decimals = mintInfo.value.data.parsed.info.decimals;
-            console.log(`Fetched decimals for ${tokenAddress.toString()}: ${decimals}`);
+            debugLog(`Fetched decimals for ${tokenAddress.toString()}: ${decimals}`);
         } catch(mintError) {
-            console.error(`Error fetching decimals for mint ${tokenAddress.toString()}:`, mintError);
+            debugLog(`Error fetching decimals for mint ${tokenAddress.toString()}:`, mintError);
             throw new Error(`Failed to fetch decimals for token ${tokenAddress.toString()}: ${mintError instanceof Error ? mintError.message : String(mintError)}`);
         }
         // --- End Fetch Decimals ---
@@ -200,7 +206,7 @@ export class PumpFunBondingCurveSwapStrategy implements ISwapStrategy {
 
         // Validate against API data (optional but recommended)
         if (data.bonding_curve && derivedBondingCurve.toBase58() !== data.bonding_curve) {
-            console.warn(`Derived bonding curve PDA ${derivedBondingCurve.toBase58()} does not match API bonding curve ${data.bonding_curve} for token ${pumpTokenMintAddress.toBase58()}. Using derived PDA.`);
+            debugLog(`Derived bonding curve PDA ${derivedBondingCurve.toBase58()} does not match API bonding curve ${data.bonding_curve} for token ${pumpTokenMintAddress.toBase58()}. Using derived PDA.`);
         }
 
         const BONDING_CURVE = derivedBondingCurve; // Use the derived address
@@ -215,7 +221,7 @@ export class PumpFunBondingCurveSwapStrategy implements ISwapStrategy {
 
         // Validate against API data (optional but recommended)
         if (data.associated_bonding_curve && derivedAssocBondingCurve.toBase58() !== data.associated_bonding_curve) {
-            console.warn(`Derived associated bonding curve PDA ${derivedAssocBondingCurve.toBase58()} does not match API value ${data.associated_bonding_curve} for token ${pumpTokenMintAddress.toBase58()}. Using derived PDA.`);
+            debugLog(`Derived associated bonding curve PDA ${derivedAssocBondingCurve.toBase58()} does not match API value ${data.associated_bonding_curve} for token ${pumpTokenMintAddress.toBase58()}. Using derived PDA.`);
         }
 
         const ASSOCIATED_BONDING_CURVE = derivedAssocBondingCurve; // Use the derived address
@@ -244,11 +250,11 @@ export class PumpFunBondingCurveSwapStrategy implements ISwapStrategy {
             if (virtualSolReserves === 0n) throw new Error("Pump virtual SOL reserves are zero.");
             tokenAmountRaw = (virtualTokenReserves * baseSolInput) / (virtualSolReserves + baseSolInput);
             sendyFeeLamports = solAmountLamports / 100n; // 1% fee on max SOL input
-            console.log('Pump Buy (SOL input): ', { maxSolIn: solAmountLamports, minTokenOut: tokenAmountRaw, fee: sendyFeeLamports, slippageBps });
+            debugLog('Pump Buy (SOL input): ', { maxSolIn: solAmountLamports, minTokenOut: tokenAmountRaw, fee: sendyFeeLamports, slippageBps });
         } else { // Sell
             // Input is token amount
             tokenAmountRaw = BigInt(Math.floor(Number(amount) * Number(tokenDecimalMultiplier)));
-            console.log('Pump Sell token amount (raw units): ', tokenAmountRaw);
+            debugLog('Pump Sell token amount (raw units): ', tokenAmountRaw);
             // Calculate minimum SOL output with slippage
             // sol_out = (virtual_sol_reserves * token_in) / (virtual_token_reserves + token_in)
             if (virtualTokenReserves === 0n && tokenAmountRaw === 0n) {
@@ -261,7 +267,7 @@ export class PumpFunBondingCurveSwapStrategy implements ISwapStrategy {
                 solAmountLamports = expectedSolOutput - (expectedSolOutput * BigInt(slippageBps)) / 10000n; // Subtract slippage %
             }
             sendyFeeLamports = solAmountLamports / 100n; // 1% fee on min SOL output
-            console.log('Pump Sell (Token input): ', { tokenIn: tokenAmountRaw, minSolOut: solAmountLamports, fee: sendyFeeLamports, slippageBps });
+            debugLog('Pump Sell (Token input): ', { tokenIn: tokenAmountRaw, minSolOut: solAmountLamports, fee: sendyFeeLamports, slippageBps });
         }
 
         // Ensure amounts are non-negative

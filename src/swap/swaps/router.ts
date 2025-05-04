@@ -23,7 +23,16 @@ export async function getSwapStrategy(
 ): Promise<ISwapStrategy> {
     const { inputMint, outputMint, type } = transactionDetails.params;
     const tokenMint = type === 'buy' ? outputMint : inputMint;
-    console.log(`Routing swap for token mint: ${tokenMint}`);
+
+    // Pretty print the swap request
+    console.log('\n================ Swap Request ================');
+    console.log(JSON.stringify(transactionDetails, null, 2));
+    console.log('==============================================\n');
+
+    // Debug log helper (no-op by default)
+    function debugLog(...args: any[]) {
+      // console.log(...args); // Uncomment to enable debug logs
+    }
 
     // 1. Create temporary instances for canHandle checks
     const tempStrategies = strategyClasses.map(StrategyClass => {
@@ -43,9 +52,19 @@ export async function getSwapStrategy(
             .catch(error => ({ strategyClass: strategy.constructor as new (...args: any[]) => ISwapStrategy, error }))
     );
 
-    console.log("Waiting for parallel canHandle checks...");
+    // debugLog("Waiting for parallel canHandle checks...");
     const results = await Promise.all(checkPromises);
-    console.log("Parallel checks complete.");
+    // debugLog("Parallel checks complete.");
+
+    // Print a table of strategy eligibility
+    const tableRows = results.map(result => {
+        const name = result.strategyClass?.name || 'Unknown';
+        const canHandle = 'canHandle' in result ? result.canHandle : false;
+        return { Strategy: name, CanHandle: canHandle ? '✅' : '❌' };
+    });
+    console.log('\n=== Swap Strategy Eligibility Table ===');
+    console.table(tableRows);
+    console.log('======================================\n');
 
     // 3. Find the first strategy CLASS that can handle the swap
     for (const result of results) {

@@ -19,6 +19,7 @@ import { ISwapStrategy, SwapStrategyDependencies } from '../base/ISwapStrategy';
 import { Buffer } from 'buffer';
 import { ensureUserTokenAccounts } from '../utils/ensureTokenAccounts';
 import { addCloseTokenAccountInstructionIfSellAll, addWsolUnwrapInstructionIfNeeded } from '../../../utils/tokenAccounts';
+import { fetchWithRetry } from '../../utils/fetchWithRetry';
 
 // Constants
 const PUMP_SWAP_PROGRAM_ID = new PublicKey('pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA');
@@ -38,6 +39,11 @@ type TokenAccountCache = {
     poolBaseTokenAccount?: PublicKey;
     poolQuoteTokenAccount?: PublicKey;
 };
+
+// Debug log helper (no-op by default)
+function debugLog(...args: any[]) {
+  // console.log(...args); // Uncomment to enable debug logs
+}
 
 // Helper to derive the PumpSwap pool PDA from the base and quote mint addresses
 function derivePumpSwapPoolPDA(baseMint: string, quoteMint: string): PublicKey {
@@ -65,27 +71,27 @@ export class PumpSwapStrategy implements ISwapStrategy {
         try {
             // Check the main PumpSwap API endpoint. We NEED data from this endpoint to generate instructions.
             const pumpswapCheckURL = `https://swap-api.pump.fun/v1/pools/pump-pool?base=${tokenMint}`;
-            console.log("Checking PumpSwapStrategy eligibility via API:", pumpswapCheckURL);
-            const pumpswapResponse = await fetch(pumpswapCheckURL);
+            debugLog("Checking PumpSwapStrategy eligibility via API:", pumpswapCheckURL);
+            const pumpswapResponse = await fetchWithRetry(pumpswapCheckURL);
     
             if (pumpswapResponse.ok) {
                 const data = await pumpswapResponse.json();
                 // Ensure the response contains the necessary pool address for swapping
                 if (data && data.address) {
-                    console.log(`PumpSwapStrategy CAN handle token ${tokenMint} via pool ${data.address}`);
+                    debugLog(`PumpSwapStrategy CAN handle token ${tokenMint} via pool ${data.address}`);
                     return true;
                 } else {
-                    console.log(`PumpSwapStrategy API response OK but missing address for ${tokenMint}, cannot handle.`);
+                    debugLog(`PumpSwapStrategy API response OK but missing address for ${tokenMint}, cannot handle.`);
                     return false; // Cannot proceed without pool address from API
                 }
             } else {
                 // If the API check fails (404 or other error), this strategy cannot handle it,
                 // as generateSwapInstructions relies on data from this endpoint.
-                console.log(`PumpSwapStrategy cannot handle: API check failed (${pumpswapResponse.status}) for ${tokenMint}.`);
+                debugLog(`PumpSwapStrategy cannot handle: API check failed (${pumpswapResponse.status}) for ${tokenMint}.`);
                 return false;
             }
         } catch (error) {
-            console.error(`Error during PumpSwapStrategy eligibility check for ${tokenMint}:`, error);
+            debugLog(`Error during PumpSwapStrategy eligibility check for ${tokenMint}:`, error);
             return false; // Network errors, etc., mean we can't confirm eligibility
         }
         // Removed the overly optimistic fallback logic
@@ -95,7 +101,7 @@ export class PumpSwapStrategy implements ISwapStrategy {
         transactionDetails: TransactionProps,
         dependencies: SwapStrategyDependencies
     ): Promise<GenerateInstructionsResult> {
-        console.log('--- Generating PumpSwap Swap Instructions using Direct Transaction Building ---');
+        debugLog('--- [PumpSwap] Generating Swap Instructions ---');
         const { connection } = dependencies;
         const { type, amount, slippageBps, userWalletAddress, inputMint, outputMint } = transactionDetails.params;
         
@@ -111,13 +117,13 @@ export class PumpSwapStrategy implements ISwapStrategy {
         try {
             // Use tokenMint instead of inputMint for the API call
             const pumpswapPoolURL = `https://swap-api.pump.fun/v1/pools/pump-pool?base=${tokenMint}`;
-            const response = await fetch(pumpswapPoolURL);
+            const response = await fetchWithRetry(pumpswapPoolURL);
             if (!response.ok) {
                 // If the primary lookup fails, we cannot proceed as we need pool data
                 throw new Error(`Failed to fetch required pool data for ${tokenMint}. Status: ${response.status}`);
             }
             poolData = await response.json();
-            console.log('Successfully fetched pool data via base mint lookup.');
+            debugLog('Successfully fetched pool data via base mint lookup.');
             
             if (!poolData || poolData.baseMintDecimals == null || poolData.quoteMintDecimals == null ||
                 poolData.baseReserves == null || poolData.quoteReserves == null) {
@@ -127,7 +133,7 @@ export class PumpSwapStrategy implements ISwapStrategy {
                 apiQuoteMint = poolData.quoteMint;
             }
         } catch (error) {
-            console.error("Error fetching pool data:", error);
+            debugLog("Error fetching pool data:", error);
             throw new Error(`Could not fetch pool data for ${tokenMint}: ${error instanceof Error ? error.message : String(error)}`);
         }
         
@@ -138,7 +144,7 @@ export class PumpSwapStrategy implements ISwapStrategy {
         
         // Log the API's pool address for confirmation
         if (poolData.address) {
-            console.log("API pool address:", poolData.address);
+            debugLog("API pool address:", poolData.address);
         }
         
         const userPublicKey = new PublicKey(userWalletAddress);
@@ -261,7 +267,7 @@ export class PumpSwapStrategy implements ISwapStrategy {
             // Calculate Sendy fee (1% of SOL input)
             sendyFeeLamports = solAmountIn / 100n;
             
-            console.log(`PumpSwap Buy (SOL Input): SOL In = ${solAmountIn}, Min Token Out = ${minBaseAmountOut}, Fee = ${sendyFeeLamports}`);
+            debugLog(`PumpSwap Buy (SOL Input): SOL In = ${solAmountIn}, Min Token Out = ${minBaseAmountOut}, Fee = ${sendyFeeLamports}`);
         } else if (type === 'sell') {
             // Selling baseMint (token) for quoteMint (SOL)
             const baseAmountIn = BigInt(Math.floor(Number(amount) * Math.pow(10, Number(baseDecimals))));
@@ -286,7 +292,7 @@ export class PumpSwapStrategy implements ISwapStrategy {
             // Calculate Sendy fee (1% of min SOL output)
             sendyFeeLamports = minQuoteAmountOut / 100n;
             
-            console.log(`PumpSwap Sell: Token In = ${baseAmountIn}, Min SOL Out = ${minQuoteAmountOut}, Fee = ${sendyFeeLamports}`);
+            debugLog(`PumpSwap Sell: Token In = ${baseAmountIn}, Min SOL Out = ${minQuoteAmountOut}, Fee = ${sendyFeeLamports}`);
         }
 
         // Derive PDA addresses - NO, use hardcoded addresses from pumpswap.ts
@@ -324,7 +330,7 @@ export class PumpSwapStrategy implements ISwapStrategy {
                 // Second u64 is maxQuoteAmountIn for buy
                 instructionData.writeBigUInt64LE(solAmount, 16);
             } catch (err) {
-                console.error("Error writing token amounts:", err);
+                debugLog("Error writing token amounts:", err);
                 throw new Error(`Failed to construct instruction data: ${err instanceof Error ? err.message : String(err)}`);
             }
         } else {
@@ -335,7 +341,7 @@ export class PumpSwapStrategy implements ISwapStrategy {
                 // Second u64 is minQuoteAmountOut for sell
                 instructionData.writeBigUInt64LE(solAmount, 16);
             } catch (err) {
-                console.error("Error writing token amounts:", err);
+                debugLog("Error writing token amounts:", err);
                 throw new Error(`Failed to construct instruction data: ${err instanceof Error ? err.message : String(err)}`);
             }
         }
@@ -369,7 +375,7 @@ export class PumpSwapStrategy implements ISwapStrategy {
         const allInstructions = [...preparatoryInstructions, swapInstruction];
 
         // Log all key addresses before building the instruction
-        console.log({
+        debugLog({
             pool: pool.toBase58(),
             baseMint: baseMint.toBase58(),
             quoteMint: quoteMint.toBase58(),
@@ -398,7 +404,7 @@ export class PumpSwapStrategy implements ISwapStrategy {
             });
         }
 
-        console.log('PumpSwap instructions created successfully');
+        debugLog('PumpSwap instructions created successfully');
         return {
             success: true,
             instructions: allInstructions,

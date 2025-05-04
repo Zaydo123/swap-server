@@ -31,7 +31,7 @@ export class MoonshotSwapStrategy implements ISwapStrategy {
 
         // Further check: ensure it's not migrated, but allow handling even if API fails
         try {
-            console.log("Checking MoonshotStrategy eligibility for:", tokenMint);
+            // console.log("Checking MoonshotStrategy eligibility for:", tokenMint);
             
             // First try the moonshot API
             const response = await fetch(`https://api.moonshot.cc/token/v1/solana/${tokenMint}`);
@@ -41,10 +41,10 @@ export class MoonshotSwapStrategy implements ISwapStrategy {
                 const isMigrated = data.moonshot?.progress == 100;
 
                 if (isMigrated) {
-                    console.log("MoonshotStrategy: Token is migrated, cannot handle.");
+                    // console.log("MoonshotStrategy: Token is migrated, cannot handle.");
                     return false; // Should be handled by Raydium or other strategy
                 } else {
-                    console.log("MoonshotStrategy: Token is not migrated, CAN handle.");
+                    // console.log("MoonshotStrategy: Token is not migrated, CAN handle.");
                     return true; // Not migrated, this strategy applies
                 }
             }
@@ -64,13 +64,13 @@ export class MoonshotSwapStrategy implements ISwapStrategy {
             }
             
             // If both APIs fail or don't confirm migration, allow handling based on suffix
-            console.warn(`MoonshotStrategy: Could not definitively confirm migration status, allowing handle based on suffix.`);
+            // console.warn(`MoonshotStrategy: Could not definitively confirm migration status, allowing handle based on suffix.`);
             return true;
                 
         } catch (error) {
              console.error("MoonshotStrategy: Error during eligibility check:", error);
              // If there's a network/fetch error, still attempt to handle based on suffix.
-             console.warn("MoonshotStrategy: Allowing handle based on suffix despite fetch error.");
+             //console.warn("MoonshotStrategy: Allowing handle based on suffix despite fetch error.");
              return true;
         }
     }
@@ -86,7 +86,7 @@ export class MoonshotSwapStrategy implements ISwapStrategy {
         transactionDetails: TransactionProps,
         dependencies: SwapStrategyDependencies // Use dependencies for connection, rpcUrl etc.
     ): Promise<GenerateInstructionsResult> {
-        console.log('--- Generating Moonshot Swap Instructions ---');
+        // console.log('--- Generating Moonshot Swap Instructions ---');
 
         // Use dependencies for connection, rpcUrl etc.
         const { connection, rpcUrl } = dependencies;
@@ -104,13 +104,13 @@ export class MoonshotSwapStrategy implements ISwapStrategy {
         const tokenAddress = new PublicKey(type === 'buy' ? outputMint : inputMint);
         let sendyFeeLamports: bigint = 0n;
 
-        console.log('Fetching token instance...');
+        // console.log('Fetching token instance...');
         const tokenObj = moonshot.Token({
             mintAddress: tokenAddress.toString(),
         });
-        console.log('Token instance fetched successfully');
+        // console.log('Token instance fetched successfully');
 
-        console.log('Proceeding with bonding curve logic (assuming not migrated).');
+        // console.log('Proceeding with bonding curve logic (assuming not migrated).');
         let tokenAmount: bigint;
         let collateralAmount: bigint;
         let swapInstructions: TransactionInstruction[] = [];
@@ -132,10 +132,10 @@ export class MoonshotSwapStrategy implements ISwapStrategy {
                     throw error;
                 }
                 
-                console.log('Moonshot BUY (SOL input):', {
-                    originalSolAmount: solAmount,
-                    convertedLamports: collateralLamports.toString()
-                });
+                // console.log('Moonshot BUY (SOL input):', {
+                //     originalSolAmount: solAmount,
+                //     convertedLamports: collateralLamports.toString()
+                // });
             } else {
                 // Amount is in token units - Assuming 9 decimals for Moonshot tokens based on original code
                 const decimals = 9n;
@@ -152,10 +152,10 @@ export class MoonshotSwapStrategy implements ISwapStrategy {
                     throw error;
                 }
                 
-                console.log('Moonshot BUY (Token output):', {
-                    originalTokenAmount: tokenAmountNumber,
-                    convertedTokenAmount: tokenAmount.toString()
-                });
+                // console.log('Moonshot BUY (Token output):', {
+                //     originalTokenAmount: tokenAmountNumber,
+                //     convertedTokenAmount: tokenAmount.toString()
+                // });
             }
 
             // Calculate fee *after* determining final collateral amount
@@ -171,7 +171,7 @@ export class MoonshotSwapStrategy implements ISwapStrategy {
                     fixedSide: transactionDetails.params.inputMint === NATIVE_MINT.toString() ? FixedSide.IN : FixedSide.OUT,
                 });
                 swapInstructions = ixs;
-                console.log('Moonshot BUY instructions prepared.');
+                // console.log('Moonshot BUY instructions prepared.');
             } catch (error) {
                 console.error("Error preparing BUY instructions:", error);
                 throw error;
@@ -182,11 +182,11 @@ export class MoonshotSwapStrategy implements ISwapStrategy {
             const tokenAmountNumber = Number(transactionDetails.params.amount);
             tokenAmount = BigInt(Math.floor(tokenAmountNumber * (10 ** Number(decimals))));
 
-            console.log('Moonshot token amount for selling:', {
-                originalAmount: tokenAmountNumber,
-                convertedAmount: tokenAmount.toString(),
-                decimals: decimals.toString()
-            });
+            // console.log('Moonshot token amount for selling:', {
+            //     originalAmount: tokenAmountNumber,
+            //     convertedAmount: tokenAmount.toString(),
+            //     decimals: decimals.toString()
+            // });
 
             try {
                 collateralAmount = await tokenObj.getCollateralAmountByTokens({
@@ -211,7 +211,7 @@ export class MoonshotSwapStrategy implements ISwapStrategy {
                     fixedSide: FixedSide.IN, // FixedSide is IN for sell (fixing the input token amount)
                 });
                 swapInstructions = ixs;
-                console.log('Moonshot SELL instructions prepared.');
+                // console.log('Moonshot SELL instructions prepared.');
             } catch (error) {
                 console.error("Error preparing SELL instructions:", error);
                 throw error;
@@ -250,7 +250,7 @@ export class MoonshotSwapStrategy implements ISwapStrategy {
             // Most likely because the Moonshot SDK is adding its own close instruction
             // but in an order that doesn't work correctly
             
-            console.log('Skipping token account close instruction for Moonshot - letting the swap handle token management');
+            // console.log('Skipping token account close instruction for Moonshot - letting the swap handle token management');
             
             // If we need to add back the close account logic in the future, we should ensure:
             // 1. The account being closed is actually empty
