@@ -171,18 +171,18 @@ export class RaydiumSwapStrategy implements ISwapStrategy {
             if (isInputSol) {
                 // SOL uses 9 decimals (1 SOL = 1,000,000,000 lamports)
                 amountInBaseUnits = Math.floor(Number(amount) * LAMPORTS_PER_SOL);
-                // console.log(`Using SOL amount: ${amount} SOL = ${amountInBaseUnits} lamports`);
+                console.log(`Using SOL amount: ${amount} SOL = ${amountInBaseUnits} lamports`);
             } else {
                 // For token input, get the correct decimals
                 const inputMintPubkey = new PublicKey(inputMint);
                 const decimals = await getTokenDecimals(connection, inputMintPubkey);
                 amountInBaseUnits = Math.floor(Number(amount) * Math.pow(10, decimals));
-                // console.log(`Using ${decimals} decimals for token ${inputMint}, ${amount} tokens = ${amountInBaseUnits} base units`);
+                console.log(`Using ${decimals} decimals for token ${inputMint}, ${amount} tokens = ${amountInBaseUnits} base units`);
             }
 
             // 2. Get quote from Raydium API
             const quoteUrl = `https://transaction-v1.raydium.io/compute/swap-base-in?inputMint=${inputMint}&outputMint=${outputMint}&amount=${amountInBaseUnits}&slippageBps=${slippageBps}&txVersion=${txVersion}`;
-            // console.log('[Raydium API] GET', quoteUrl);
+            console.log('[Raydium API] GET', quoteUrl);
             const { data: swapResponse } = await axios.get(quoteUrl);
             if (!swapResponse || !swapResponse.data) {
                 return { success: false, error: 'Failed to get quote from Raydium API.' };
@@ -191,8 +191,16 @@ export class RaydiumSwapStrategy implements ISwapStrategy {
             // Now that swapResponse is available, check if output is SOL/WSOL
             let isOutputSol = outputMint === SOL_MINT;
 
-            // 3. Get priority fee from user params, or default to 1000
-            let computeUnitPriceMicroLamports = (transactionDetails.params.priorityFee?.toString()) || '1000';
+            // 3. Get recommended priority fee (optional, fallback to 1000)
+            let computeUnitPriceMicroLamports = '1000';
+            try {
+                const { data } = await axios.get('https://transaction-v1.raydium.io/priority-fee');
+                if (data && data.data && data.data.default && data.data.default.h) {
+                    computeUnitPriceMicroLamports = String(data.data.default.h);
+                }
+            } catch (e) {
+                console.warn('Failed to fetch Raydium priority fee, using default 1000');
+            }
 
             // 4. Build transaction via Raydium API
             const txBuildUrl = 'https://transaction-v1.raydium.io/transaction/swap-base-in';
@@ -215,7 +223,7 @@ export class RaydiumSwapStrategy implements ISwapStrategy {
                 const ata = await getAssociatedTokenAddress(new PublicKey(outputMint), userPublicKey);
                 txBuildBody.outputAccount = ata.toBase58();
             }
-            // console.log('[Raydium API] POST', txBuildUrl, txBuildBody);
+            console.log('[Raydium API] POST', txBuildUrl, txBuildBody);
             const { data: swapTransactions } = await axios.post(txBuildUrl, txBuildBody);
             if (!swapTransactions || !swapTransactions.data || !swapTransactions.data[0] || !swapTransactions.data[0].transaction) {
                 return { success: false, error: 'Failed to get transaction from Raydium API.' };
@@ -231,19 +239,19 @@ export class RaydiumSwapStrategy implements ISwapStrategy {
             if (isInputSol && swapResponse.data.inputAmount) { // Fee on INPUT SOL for buys
                 try {
                     feeLamports = Math.floor(Number(swapResponse.data.inputAmount) * 0.01);
-                    // console.log(`Charging 1% fee on SOL input: ${feeLamports / LAMPORTS_PER_SOL} SOL`);
+                    console.log(`Charging 1% fee on SOL input: ${feeLamports / LAMPORTS_PER_SOL} SOL`);
                 } catch (e) {
-                    // console.error('Error calculating buy fee from inputAmount:', e);
+                    console.error('Error calculating buy fee from inputAmount:', e);
                 }
             } else if (!isInputSol && swapResponse.data.outputAmount) { // Fee on OUTPUT SOL for sells
                 try {
                     feeLamports = Math.floor(Number(swapResponse.data.outputAmount) * 0.01);
-                    // console.log(`Charging 1% fee on SOL output: ${feeLamports / LAMPORTS_PER_SOL} SOL`);
+                    console.log(`Charging 1% fee on SOL output: ${feeLamports / LAMPORTS_PER_SOL} SOL`);
                 } catch (e) {
-                    // console.error('Error calculating sell fee from outputAmount:', e);
+                    console.error('Error calculating sell fee from outputAmount:', e);
                 }
             } else {
-                // console.log('Could not determine fee: input/output amount missing or not a SOL swap.');
+                console.log('Could not determine fee: input/output amount missing or not a SOL swap.');
             }
             
             // Ensure fee is an integer
@@ -301,7 +309,7 @@ export class RaydiumSwapStrategy implements ISwapStrategy {
                     });
                     
                     if (feeIx) {
-                        // console.log(`Adding fee instruction of ${feeLamports} lamports to transaction`);
+                        console.log(`Adding fee instruction of ${feeLamports} lamports to transaction`);
                         allInstructions.push(feeIx);
                     }
                 }
@@ -328,10 +336,10 @@ export class RaydiumSwapStrategy implements ISwapStrategy {
                             const buffer = balanceRaw * 0.001;
                             const isSellAll = amountRaw >= balanceRaw - buffer;
                             
-                            // console.log(`Checking if sell all: ${inputMint} - Selling: ${amountRaw}, Balance: ${balanceRaw}, Is sell all: ${isSellAll}`);
+                            console.log(`Checking if sell all: ${inputMint} - Selling: ${amountRaw}, Balance: ${balanceRaw}, Is sell all: ${isSellAll}`);
                             
                             if (isSellAll) {
-                                // console.log(`Adding close account instruction for token ${inputMint} (selling all tokens)`);
+                                console.log(`Adding close account instruction for token ${inputMint} (selling all tokens)`);
                                 
                                 // Add close account instruction
                                 const closeIx = createCloseAccountInstruction(
@@ -344,7 +352,7 @@ export class RaydiumSwapStrategy implements ISwapStrategy {
                             }
                         }
                     } catch (error) {
-                        // console.error("Error checking/adding close account instruction:", error);
+                        console.error("Error checking/adding close account instruction:", error);
                     }
                 }
                 
