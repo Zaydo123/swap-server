@@ -12,6 +12,7 @@ import axios from 'axios';
 import { VersionedTransaction } from '@solana/web3.js';
 import { getAssociatedTokenAddress, createCloseAccountInstruction } from '@solana/spl-token';
 import { TransactionMessage, MessageV0 } from '@solana/web3.js';
+import { fetchWithRetry } from '../../utils/fetchWithRetry';
 
 // Cache for pool data to improve performance
 let poolDataCache: any = null;
@@ -46,16 +47,16 @@ export class RaydiumSwapStrategy implements ISwapStrategy {
     ): Promise<boolean> {
         const { inputMint, outputMint, type } = transactionDetails.params;
         const tokenMint = type === 'buy' ? outputMint : inputMint;
-        // console.log("Checking RaydiumStrategy eligibility for token mint:", tokenMint);
+        console.log("Checking RaydiumStrategy eligibility for token mint:", tokenMint);
 
         // Check for Pump.fun tokens first
         if (tokenMint.toLowerCase().includes('pump')) {
             // console.log(`RaydiumStrategy: Detected pump token ${tokenMint}, checking details...`);
             try {
                 const dataURL = `https://frontend-api-v3.pump.fun/coins/${tokenMint}`;
-                const response = await fetch(dataURL);
+                const response = await fetchWithRetry(dataURL);
                 if (!response.ok) {
-                    // console.warn(`RaydiumStrategy: Failed to fetch pump.fun data for ${tokenMint} (${response.status}). Rejecting.`);
+                    console.warn(`RaydiumStrategy: Failed to fetch pump.fun data for ${tokenMint} (${response.status}). Rejecting.`);
                     return false; // Cannot verify, reject
                 }
                 const data = await response.json();
@@ -82,9 +83,9 @@ export class RaydiumSwapStrategy implements ISwapStrategy {
         if (tokenMint.toLowerCase().includes('moon')) {
             // console.log(`RaydiumStrategy: Detected moon token ${tokenMint}, checking migration...`);
             try {
-                const response = await fetch(`https://api.moonshot.cc/token/v1/solana/${tokenMint}`);
+                const response = await fetchWithRetry(`https://api.moonshot.cc/token/v1/solana/${tokenMint}`);
                  if (!response.ok) {
-                    // console.warn(`RaydiumStrategy: Failed to fetch moonshot data for ${tokenMint} (${response.status}). Rejecting.`);
+                    console.warn(`RaydiumStrategy: Failed to fetch moonshot data for ${tokenMint} (${response.status}). Rejecting.`);
                     return false; // Cannot verify, reject
                 }
                 const data = await response.json();
@@ -110,7 +111,7 @@ export class RaydiumSwapStrategy implements ISwapStrategy {
         }
 
         // Final check: Verify if the token exists on standard Raydium pools
-        // console.log(`RaydiumStrategy: Performing final check for ${tokenMint} on standard Raydium pools...`);
+        console.log(`RaydiumStrategy: Performing final check for ${tokenMint} on standard Raydium pools...`);
         try {
             // Initialize Raydium SDK instance for the check
             const raydium = await Raydium.load({ 
@@ -127,15 +128,15 @@ export class RaydiumSwapStrategy implements ISwapStrategy {
 
             // Check if pool data was found
             if (poolInfo && poolInfo.data && poolInfo.data.length > 0) {
-                // console.log(`RaydiumStrategy: Standard Raydium pool found for ${tokenMint}. CAN handle.`);
+                 console.log(`RaydiumStrategy: Standard Raydium pool found for ${tokenMint}. CAN handle.`);
                  return true;
             } else {
-                // console.log(`RaydiumStrategy: No standard Raydium pool found for ${tokenMint} via SDK. Rejecting.`);
+                console.log(`RaydiumStrategy: No standard Raydium pool found for ${tokenMint} via SDK. Rejecting.`);
                 return false;
             }
         } catch (error) {
-            // console.error(`RaydiumStrategy: Error during final Raydium pool check for ${tokenMint}:`, error);
-            return false; // Error during check, reject
+             console.error(`RaydiumStrategy: Error during final Raydium pool check for ${tokenMint}:`, error);
+             return false; // Error during check, reject
         }
     }
 

@@ -42,7 +42,7 @@ export class PumpFunBondingCurveSwapStrategy implements ISwapStrategy {
         // EndsWith check removed as router might handle non-pump tokens first
 
         try {
-            debugLog("Checking PumpFunBondingCurveStrategy eligibility for:", tokenMint);
+            console.log("Checking PumpFunBondingCurveStrategy eligibility for:", tokenMint);
 
             // Fetch necessary data using helper (assuming router pre-caches)
             // Use helper functions defined in router.ts context or pass cache/fetchers via dependencies
@@ -52,10 +52,10 @@ export class PumpFunBondingCurveSwapStrategy implements ISwapStrategy {
 
             // 1. Check if bonded to pumpswap (if so, this strategy is NOT applicable)
             if (pumpswapResponse.ok) {
-                debugLog("Pump token is bonded to pumpswap, PumpFunBondingCurveStrategy cannot handle.");
+                console.log("Pump token is bonded to pumpswap, PumpFunBondingCurveStrategy cannot handle.");
                 return false; // Handled by PumpSwapStrategy
             } else if (pumpswapResponse.status !== 404) {
-                debugLog('Error checking pumpswap status for eligibility:', pumpswapResponse.status, await pumpswapResponse.text());
+                console.warn('Error checking pumpswap status for eligibility:', pumpswapResponse.status, await pumpswapResponse.text());
                 // Treat API errors as potentially handleable by this strategy if pump swap fails, but log warning
             }
 
@@ -63,39 +63,39 @@ export class PumpFunBondingCurveSwapStrategy implements ISwapStrategy {
             const dataURL = `https://frontend-api-v3.pump.fun/coins/${tokenMint}`;
             const response = await fetchWithRetry(dataURL);
             if (!response.ok) {
-                 debugLog(`Failed to fetch pump.fun coin data for eligibility check (${response.status})`);
-                 // If we can't get data, we can't confirm it's a bonding curve pump token
-                 return false;
+                console.error(`Failed to fetch pump.fun coin data for eligibility check (${response.status})`);
+                // If we can't get data, we can't confirm it's a bonding curve pump token
+                return false;
             }
             
             let data: any;
             try {
                 data = await response.json();
             } catch (parseError) {
-                debugLog(`Error parsing JSON from pump.fun API for ${tokenMint}:`, parseError);
+                console.error(`Error parsing JSON from pump.fun API for ${tokenMint}:`, parseError);
                 // If the response isn't valid JSON, it's not a valid pump.fun token for this strategy
                 return false;
             }
 
-             // Basic validation of essential bonding curve data
+            // Basic validation of essential bonding curve data
             if (!data.bonding_curve || !data.associated_bonding_curve || !data.mint || data.mint !== tokenMint) {
-                debugLog("PumpFunBondingCurveStrategy: Incomplete or mismatched pump.fun coin data.");
+                console.log("PumpFunBondingCurveStrategy: Incomplete or mismatched pump.fun coin data.");
                 return false; // Not a valid pump token for bonding curve interaction
             }
 
             // 3. Check if it has a Raydium pool AND was created BEFORE the cutoff
-             const createdBeforeThreshold = data.created_timestamp && data.created_timestamp < PUMP_FUN_RAYDIUM_CUTOFF_TIMESTAMP;
+            const createdBeforeThreshold = data.created_timestamp && data.created_timestamp < PUMP_FUN_RAYDIUM_CUTOFF_TIMESTAMP;
             if (data.raydium_pool && createdBeforeThreshold) {
-                debugLog("Pump token has Raydium pool and is old, PumpFunBondingCurveStrategy cannot handle (should use Raydium).");
+                console.log("Pump token has Raydium pool and is old, PumpFunBondingCurveStrategy cannot handle (should use Raydium).");
                 return false; // Should be handled by Raydium strategy
             }
 
             // If not bonded to pumpswap, has valid bonding curve data, and doesn't meet Raydium criteria, use bonding curve.
-            debugLog("PumpFunBondingCurveStrategy CAN handle this token.");
+            console.log("PumpFunBondingCurveStrategy CAN handle this token.");
             return true;
 
         } catch (error) {
-            debugLog('Error during PumpFunBondingCurveStrategy eligibility check:', error);
+            console.error('Error during PumpFunBondingCurveStrategy eligibility check:', error);
             return false;
         }
     }
