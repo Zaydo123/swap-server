@@ -51,21 +51,26 @@ export async function prepareTokenAccounts({
   return { ataMap };
 }
 
-// Utility: Add WSOL unwrap (close account) instruction if outputMint is WSOL
+// Utility: Add WSOL unwrap (close account) instruction if outputMint is WSOL and WSOL balance is nonzero
 export async function addWsolUnwrapInstructionIfNeeded({
   outputMint,
   userPublicKey,
-  instructions
+  instructions,
+  connection
 }: {
   outputMint: string,
   userPublicKey: PublicKey,
-  instructions: TransactionInstruction[]
+  instructions: TransactionInstruction[],
+  connection: Connection
 }) {
   if (outputMint === NATIVE_MINT.toBase58()) {
     const wsolAta = await getAssociatedTokenAddress(NATIVE_MINT, userPublicKey, false);
-    instructions.push(
-      createCloseAccountInstruction(wsolAta, userPublicKey, userPublicKey)
-    );
+    const tokenInfo = await connection.getTokenAccountBalance(wsolAta).catch(() => undefined);
+    if (tokenInfo?.value && Number(tokenInfo.value.amount) > 0) {
+      instructions.push(
+        createCloseAccountInstruction(wsolAta, userPublicKey, userPublicKey)
+      );
+    }
   }
 }
 
