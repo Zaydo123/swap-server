@@ -170,32 +170,45 @@ export class PumpSwapStrategy implements ISwapStrategy {
                 new PublicKey(userWalletAddress)
             );
             const solAmountIn = BigInt(Math.floor(Number(amount) * Number(LAMPORTS_PER_SOL)));
-            const wsolAccountInfo = await connection.getAccountInfo(userQuoteTokenAccount);
             let requiredLamports = solAmountIn;
-
+            let topUpLamports = solAmountIn;
+            const wsolAccountInfo = await connection.getAccountInfo(userQuoteTokenAccount);
             if (!wsolAccountInfo) {
                 // Account does not exist, must fund with rent-exemption + swap amount
                 const rentExempt = BigInt(await connection.getMinimumBalanceForRentExemption(165));
                 requiredLamports = solAmountIn + rentExempt;
-            } else if (BigInt(wsolAccountInfo.lamports) < solAmountIn) {
-                // Account exists, but not enough lamports
-                requiredLamports = solAmountIn - BigInt(wsolAccountInfo.lamports);
+                topUpLamports = requiredLamports;
+                preparatoryInstructions.push(
+                    createAssociatedTokenAccountInstruction(
+                        new PublicKey(userWalletAddress),
+                        userQuoteTokenAccount,
+                        new PublicKey(userWalletAddress),
+                        quoteMint
+                    )
+                );
             } else {
-                requiredLamports = 0n; // Already enough
+                // Account exists, check if it has enough lamports
+                const currentLamports = BigInt(wsolAccountInfo.lamports);
+                if (currentLamports < solAmountIn) {
+                    topUpLamports = solAmountIn - currentLamports;
+                } else {
+                    topUpLamports = 0n;
+                }
             }
-
-            if (requiredLamports > 0n) {
+            // Only transfer if needed
+            if (topUpLamports > 0n) {
                 preparatoryInstructions.push(
                     SystemProgram.transfer({
                         fromPubkey: new PublicKey(userWalletAddress),
                         toPubkey: userQuoteTokenAccount,
-                        lamports: Number(requiredLamports),
+                        lamports: Number(topUpLamports),
                     })
                 );
-                preparatoryInstructions.push(
-                    createSyncNativeInstruction(userQuoteTokenAccount)
-                );
             }
+            // Always sync after funding
+            preparatoryInstructions.push(
+                createSyncNativeInstruction(userQuoteTokenAccount)
+            );
         }
 
         // --- ENSURE WSOL ATA EXISTS FOR SELL (for receiving SOL as WSOL) ---
