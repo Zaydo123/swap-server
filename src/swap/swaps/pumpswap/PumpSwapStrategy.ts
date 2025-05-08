@@ -389,7 +389,8 @@ export class PumpSwapStrategy implements ISwapStrategy {
         await addWsolUnwrapInstructionIfNeeded({
             outputMint: transactionDetails.params.outputMint,
             userPublicKey: userPublicKey,
-            instructions: allInstructions
+            instructions: allInstructions,
+            connection: connection
         });
 
         // Add close non-WSOL token account instruction if selling all tokens

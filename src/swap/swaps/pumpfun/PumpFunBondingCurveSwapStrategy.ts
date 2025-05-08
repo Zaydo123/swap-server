@@ -340,7 +340,8 @@ export class PumpFunBondingCurveSwapStrategy implements ISwapStrategy {
         await addWsolUnwrapInstructionIfNeeded({
             outputMint: transactionDetails.params.outputMint,
             userPublicKey: payer,
-            instructions: allInstructions
+            instructions: allInstructions,
+            connection: connection
         });
 
         // Add close token account instruction if selling all tokens

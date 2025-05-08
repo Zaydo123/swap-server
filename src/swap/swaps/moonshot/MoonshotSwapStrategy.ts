@@ -238,7 +238,8 @@ export class MoonshotSwapStrategy implements ISwapStrategy {
         await addWsolUnwrapInstructionIfNeeded({
             outputMint: transactionDetails.params.outputMint,
             userPublicKey: new PublicKey(transactionDetails.params.userWalletAddress),
-            instructions: allInstructions
+            instructions: allInstructions,
+            connection: connection
         });
 
         // Add close token account instruction if selling all tokens

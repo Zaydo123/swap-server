@@ -471,7 +471,8 @@ export class RaydiumSwapStrategy implements ISwapStrategy {
             await addWsolUnwrapInstructionIfNeeded({
                 outputMint,
                 userPublicKey,
-                instructions: cleanupInstructions
+                instructions: cleanupInstructions,
+                connection
             });
             }
 
