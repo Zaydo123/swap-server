@@ -236,6 +236,15 @@ export class PumpSwapStrategy implements ISwapStrategy {
             preparatoryInstructions.push(
                 createSyncNativeInstruction(userQuoteTokenAccount)
             );
+
+            // Always ensure WSOL ATA is created and funded, even if it was closed previously
+            await prepareTokenAccounts({
+                connection,
+                userPublicKey: new PublicKey(userWalletAddress),
+                mints: [quoteMint, NATIVE_MINT],
+                instructions: preparatoryInstructions,
+                wsolHandling: { wrap: true, amount: solAmountIn }
+            });
         }
 
         // --- ENSURE WSOL ATA EXISTS FOR SELL (for receiving SOL as WSOL) ---
