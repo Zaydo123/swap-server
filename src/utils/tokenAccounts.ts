@@ -32,35 +32,29 @@ export async function prepareTokenAccounts({
   if (wsolHandling && wsolHandling.wrap) {
     const wsolAta = await getAssociatedTokenAddress(NATIVE_MINT, userPublicKey, false);
     const wsolAccountInfo = await connection.getAccountInfo(wsolAta);
+    let requiredLamports = wsolHandling.amount || 0n;
+    const rentExempt = BigInt(await connection.getMinimumBalanceForRentExemption(165));
     if (!wsolAccountInfo) {
+      // Account does not exist, must fund with rent-exemption + swap amount
+      requiredLamports = (wsolHandling.amount || 0n) + rentExempt;
       instructions.push(createAssociatedTokenAccountIdempotentInstruction(userPublicKey, wsolAta, userPublicKey, NATIVE_MINT));
+    } else {
+      // Account exists, only top up if needed
+      const currentLamports = BigInt(wsolAccountInfo.lamports);
+      if (currentLamports < (wsolHandling.amount || 0n)) {
+        requiredLamports = (wsolHandling.amount || 0n) - currentLamports;
+      } else {
+        requiredLamports = 0n;
+      }
+    }
+    if (requiredLamports > 0n) {
+      instructions.push(SystemProgram.transfer({
+        fromPubkey: userPublicKey,
+        toPubkey: wsolAta,
+        lamports: Number(requiredLamports),
+      }));
     }
     instructions.push(createSyncNativeInstruction(wsolAta));
-    if (wsolHandling.amount && wsolHandling.amount > 0n) {
-      // Always get rent-exempt minimum
-      const rentExempt = BigInt(await connection.getMinimumBalanceForRentExemption(165));
-      let requiredLamports = wsolHandling.amount;
-      if (!wsolAccountInfo) {
-        // Account does not exist, must fund with rent-exemption + swap amount
-        requiredLamports = wsolHandling.amount + rentExempt;
-      } else {
-        // Account exists, only top up if needed
-        const currentLamports = BigInt(wsolAccountInfo.lamports);
-        if (currentLamports < wsolHandling.amount) {
-          requiredLamports = wsolHandling.amount - currentLamports;
-        } else {
-          requiredLamports = 0n; // Already has enough
-        }
-      }
-      // Only transfer if needed
-      if (requiredLamports > 0n) {
-        instructions.push(SystemProgram.transfer({
-          fromPubkey: userPublicKey,
-          toPubkey: wsolAta,
-          lamports: Number(requiredLamports),
-        }));
-      }
-    }
   }
   if (wsolHandling && wsolHandling.unwrap) {
     const wsolAta = await getAssociatedTokenAddress(NATIVE_MINT, userPublicKey, false);

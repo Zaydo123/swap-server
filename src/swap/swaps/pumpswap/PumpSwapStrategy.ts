@@ -174,76 +174,28 @@ export class PumpSwapStrategy implements ISwapStrategy {
         const baseReserves = BigInt(String(poolData.baseReserves));
         const quoteReserves = BigInt(String(poolData.quoteReserves));
 
-        // Ensure user has token accounts for both baseMint and quoteMint, and always include NATIVE_MINT
+        // Build deduped mints array for all cases
         const mintsToEnsure = Array.from(new Set([
-            baseMint,
-            quoteMint,
-            NATIVE_MINT
-        ].map((m) => m.toString()))).map((s) => new PublicKey(s));
-        await prepareTokenAccounts({
-            connection,
-            userPublicKey: new PublicKey(userWalletAddress),
-            mints: mintsToEnsure,
-            instructions: preparatoryInstructions,
-        });
+            baseMint.toBase58(),
+            quoteMint.toBase58(),
+            NATIVE_MINT.toBase58()
+        ])).map((s) => new PublicKey(s));
 
-        // --- WRAP SOL IF NEEDED (for buy with SOL) ---
         if (type === 'buy') {
-            const userQuoteTokenAccount = getAssociatedTokenAddressSync(
-                quoteMint,
-                new PublicKey(userWalletAddress)
-            );
             const solAmountIn = BigInt(Math.floor(Number(amount) * Number(LAMPORTS_PER_SOL)));
-            const rentExempt = BigInt(await connection.getMinimumBalanceForRentExemption(165));
-            let requiredLamports = solAmountIn;
-            let topUpLamports = solAmountIn;
-            const wsolAccountInfo = await connection.getAccountInfo(userQuoteTokenAccount);
-            if (!wsolAccountInfo) {
-                // Account does not exist, must fund with rent-exemption + swap amount
-                requiredLamports = solAmountIn + rentExempt;
-                topUpLamports = requiredLamports;
-                preparatoryInstructions.push(
-                    createAssociatedTokenAccountInstruction(
-                        new PublicKey(userWalletAddress),
-                        userQuoteTokenAccount,
-                        new PublicKey(userWalletAddress),
-                        quoteMint
-                    )
-                );
-                // Always transfer swap amount + rent-exempt minimum
-                preparatoryInstructions.push(
-                    SystemProgram.transfer({
-                        fromPubkey: new PublicKey(userWalletAddress),
-                        toPubkey: userQuoteTokenAccount,
-                        lamports: Number(topUpLamports),
-                    })
-                );
-            } else {
-                // Account exists, check if it has enough lamports for swap amount (ignore rent-exempt, since it's already there)
-                const currentLamports = BigInt(wsolAccountInfo.lamports);
-                if (currentLamports < (solAmountIn + rentExempt)) {
-                    topUpLamports = (solAmountIn + rentExempt) - currentLamports;
-                    preparatoryInstructions.push(
-                        SystemProgram.transfer({
-                            fromPubkey: new PublicKey(userWalletAddress),
-                            toPubkey: userQuoteTokenAccount,
-                            lamports: Number(topUpLamports),
-                        })
-                    );
-                }
-            }
-            // Always sync after funding
-            preparatoryInstructions.push(
-                createSyncNativeInstruction(userQuoteTokenAccount)
-            );
-
-            // Always ensure WSOL ATA is created and funded, even if it was closed previously
             await prepareTokenAccounts({
                 connection,
                 userPublicKey: new PublicKey(userWalletAddress),
-                mints: [quoteMint, NATIVE_MINT],
+                mints: mintsToEnsure,
                 instructions: preparatoryInstructions,
                 wsolHandling: { wrap: true, amount: solAmountIn }
+            });
+        } else {
+            await prepareTokenAccounts({
+                connection,
+                userPublicKey: new PublicKey(userWalletAddress),
+                mints: mintsToEnsure,
+                instructions: preparatoryInstructions
             });
         }
 
