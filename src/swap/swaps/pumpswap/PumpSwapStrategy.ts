@@ -22,6 +22,7 @@ import { addCloseTokenAccountInstructionIfSellAll, addWsolUnwrapInstructionIfNee
 import { fetchWithRetry } from '../../utils/fetchWithRetry';
 import { calculateSendyFee, makeSendyFeeInstruction } from '../../../utils/feeUtils';
 import { SENDY_FEE_ACCOUNT } from '../../constants';
+import { prepareTokenAccounts } from '../../../utils/tokenAccounts';
 
 // Constants
 const PUMP_SWAP_PROGRAM_ID = new PublicKey('pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA');
@@ -156,13 +157,17 @@ export class PumpSwapStrategy implements ISwapStrategy {
         const baseReserves = BigInt(String(poolData.baseReserves));
         const quoteReserves = BigInt(String(poolData.quoteReserves));
 
-        // Ensure user has token accounts for both baseMint and quoteMint
-        const mintsToEnsure = [baseMint, quoteMint];
-        await ensureUserTokenAccounts({
+        // Ensure user has token accounts for both baseMint and quoteMint, and always include NATIVE_MINT
+        const mintsToEnsure = Array.from(new Set([
+            baseMint,
+            quoteMint,
+            NATIVE_MINT
+        ].map((m) => m.toString()))).map((s) => new PublicKey(s));
+        await prepareTokenAccounts({
             connection,
             userPublicKey: new PublicKey(userWalletAddress),
             mints: mintsToEnsure,
-            preparatoryInstructions
+            instructions: preparatoryInstructions,
         });
 
         // --- WRAP SOL IF NEEDED (for buy with SOL) ---
@@ -172,12 +177,12 @@ export class PumpSwapStrategy implements ISwapStrategy {
                 new PublicKey(userWalletAddress)
             );
             const solAmountIn = BigInt(Math.floor(Number(amount) * Number(LAMPORTS_PER_SOL)));
+            const rentExempt = BigInt(await connection.getMinimumBalanceForRentExemption(165));
             let requiredLamports = solAmountIn;
             let topUpLamports = solAmountIn;
             const wsolAccountInfo = await connection.getAccountInfo(userQuoteTokenAccount);
             if (!wsolAccountInfo) {
                 // Account does not exist, must fund with rent-exemption + swap amount
-                const rentExempt = BigInt(await connection.getMinimumBalanceForRentExemption(165));
                 requiredLamports = solAmountIn + rentExempt;
                 topUpLamports = requiredLamports;
                 preparatoryInstructions.push(
@@ -188,17 +193,7 @@ export class PumpSwapStrategy implements ISwapStrategy {
                         quoteMint
                     )
                 );
-            } else {
-                // Account exists, check if it has enough lamports
-                const currentLamports = BigInt(wsolAccountInfo.lamports);
-                if (currentLamports < solAmountIn) {
-                    topUpLamports = solAmountIn - currentLamports;
-                } else {
-                    topUpLamports = 0n;
-                }
-            }
-            // Only transfer if needed
-            if (topUpLamports > 0n) {
+                // Always transfer swap amount + rent-exempt minimum
                 preparatoryInstructions.push(
                     SystemProgram.transfer({
                         fromPubkey: new PublicKey(userWalletAddress),
@@ -206,6 +201,19 @@ export class PumpSwapStrategy implements ISwapStrategy {
                         lamports: Number(topUpLamports),
                     })
                 );
+            } else {
+                // Account exists, check if it has enough lamports for swap amount (ignore rent-exempt, since it's already there)
+                const currentLamports = BigInt(wsolAccountInfo.lamports);
+                if (currentLamports < (solAmountIn + rentExempt)) {
+                    topUpLamports = (solAmountIn + rentExempt) - currentLamports;
+                    preparatoryInstructions.push(
+                        SystemProgram.transfer({
+                            fromPubkey: new PublicKey(userWalletAddress),
+                            toPubkey: userQuoteTokenAccount,
+                            lamports: Number(topUpLamports),
+                        })
+                    );
+                }
             }
             // Always sync after funding
             preparatoryInstructions.push(
@@ -281,6 +289,8 @@ export class PumpSwapStrategy implements ISwapStrategy {
             
             // Calculate Sendy fee (1% of SOL input)
             sendyFeeLamports = solAmountIn / 100n;
+            
+            console.log('PumpSwap Buy: SOL In =', solAmountIn, 'Sendy Fee =', sendyFeeLamports);
             
             debugLog(`PumpSwap Buy (SOL Input): SOL In = ${solAmountIn}, Min Token Out = ${minBaseAmountOut}, Fee = ${sendyFeeLamports}`);
         } else if (type === 'sell') {
