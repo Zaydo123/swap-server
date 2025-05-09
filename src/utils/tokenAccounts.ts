@@ -32,17 +32,18 @@ export async function prepareTokenAccounts({
   if (wsolHandling && wsolHandling.wrap) {
     const wsolAta = await getAssociatedTokenAddress(NATIVE_MINT, userPublicKey, false);
     const wsolAccountInfo = await connection.getAccountInfo(wsolAta);
-    let requiredLamports = wsolHandling.amount || 0n;
     const rentExempt = BigInt(await connection.getMinimumBalanceForRentExemption(165));
+    const requiredTotal = (wsolHandling.amount || 0n) + rentExempt;
+    let requiredLamports = wsolHandling.amount || 0n;
     if (!wsolAccountInfo) {
-      // Account does not exist, must fund with rent-exemption + swap amount
-      requiredLamports = (wsolHandling.amount || 0n) + rentExempt;
+      // Account does not exist, must fund with swap amount + rent-exempt
+      requiredLamports = requiredTotal;
       instructions.push(createAssociatedTokenAccountIdempotentInstruction(userPublicKey, wsolAta, userPublicKey, NATIVE_MINT));
     } else {
-      // Account exists, only top up if needed
+      // Account exists, top up to requiredTotal if needed
       const currentLamports = BigInt(wsolAccountInfo.lamports);
-      if (currentLamports < (wsolHandling.amount || 0n)) {
-        requiredLamports = (wsolHandling.amount || 0n) - currentLamports;
+      if (currentLamports < requiredTotal) {
+        requiredLamports = requiredTotal - currentLamports;
       } else {
         requiredLamports = 0n;
       }

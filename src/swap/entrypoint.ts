@@ -142,7 +142,8 @@ export async function handleSwapRequest(req: Request, res: Response): Promise<vo
             const userPublicKey = new PublicKey(transactionDetails.params.userWalletAddress);
             // Set feeLamports to 0 to avoid double-charging; strategy already includes fee instruction
             const feeLamports = 0;
-            const priorityFeeMicroLamports = transactionDetails.params.priorityFee ? transactionDetails.params.priorityFee * 1_000_000 : 0;
+            // User's value is the total SOL budget for the swap
+            const priorityFeeMicroLamports = Math.floor((transactionDetails.params.priorityFee ?? 0) * LAMPORTS_PER_SOL);
 
             const compiledResult = await generateAndCompileTransaction(
                 userPublicKey,
