@@ -49,10 +49,17 @@ function debugLog(...args: any[]) {
 }
 
 // Helper to derive the PumpSwap pool PDA from the base and quote mint addresses
-function derivePumpSwapPoolPDA(baseMint: string, quoteMint: string): PublicKey {
+function derivePumpSwapPoolPDA(baseMint: string, quoteMint: string, creator: string, poolIndex: number): PublicKey {
+    // Convert poolIndex from number to Buffer for PDA derivation
+    // Assuming poolIndex is u16, so 2 bytes, little-endian
+    const indexBuffer = Buffer.alloc(2);
+    indexBuffer.writeUInt16LE(poolIndex, 0);
+
     return PublicKey.findProgramAddressSync(
         [
             Buffer.from('pool'),
+            indexBuffer, // Add index to seeds
+            new PublicKey(creator).toBuffer(), // Add creator to seeds
             new PublicKey(baseMint).toBuffer(),
             new PublicKey(quoteMint).toBuffer()
         ],
@@ -143,7 +150,17 @@ export class PumpSwapStrategy implements ISwapStrategy {
         // Use the pool data to get mints
         const baseMint = new PublicKey(poolData.baseMint);
         const quoteMint = new PublicKey(poolData.quoteMint);
-        const pool = new PublicKey(poolData.address);
+        // Get creator and poolIndex from API response (ensure they exist in poolData)
+        const creator = poolData.creator; 
+        const poolIndex = poolData.poolIndex; 
+
+        // Validate that creator and poolIndex are present
+        if (!creator || typeof poolIndex !== 'number') {
+            throw new Error('Creator or poolIndex missing from API pool data, cannot derive pool PDA.');
+        }
+
+        // Derive the pool PDA using all required seeds
+        const pool = derivePumpSwapPoolPDA(baseMint.toBase58(), quoteMint.toBase58(), creator, poolIndex);
         
         // Log the API's pool address for confirmation
         if (poolData.address) {

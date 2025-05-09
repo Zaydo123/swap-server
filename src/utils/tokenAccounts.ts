@@ -1,5 +1,5 @@
 import { Connection, PublicKey, TransactionInstruction, SystemProgram } from '@solana/web3.js';
-import { NATIVE_MINT, getAssociatedTokenAddress, createAssociatedTokenAccountInstruction, createSyncNativeInstruction, createCloseAccountInstruction } from '@solana/spl-token';
+import { NATIVE_MINT, getAssociatedTokenAddress, createAssociatedTokenAccountIdempotentInstruction, createSyncNativeInstruction, createCloseAccountInstruction } from '@solana/spl-token';
 
 /**
  * Prepares all necessary ATA creation instructions for a set of mints.
@@ -25,7 +25,7 @@ export async function prepareTokenAccounts({
     ataMap[mint.toString()] = ata;
     const accountInfo = await connection.getAccountInfo(ata);
     if (!accountInfo) {
-      instructions.push(createAssociatedTokenAccountInstruction(userPublicKey, ata, userPublicKey, mint));
+      instructions.push(createAssociatedTokenAccountIdempotentInstruction(userPublicKey, ata, userPublicKey, mint));
     }
   }
   // WSOL handling
@@ -33,13 +33,18 @@ export async function prepareTokenAccounts({
     const wsolAta = await getAssociatedTokenAddress(NATIVE_MINT, userPublicKey, false);
     const wsolAccountInfo = await connection.getAccountInfo(wsolAta);
     if (!wsolAccountInfo) {
-      instructions.push(createAssociatedTokenAccountInstruction(userPublicKey, wsolAta, userPublicKey, NATIVE_MINT));
+      instructions.push(createAssociatedTokenAccountIdempotentInstruction(userPublicKey, wsolAta, userPublicKey, NATIVE_MINT));
     }
     instructions.push(createSyncNativeInstruction(wsolAta));
     if (wsolHandling.amount && wsolHandling.amount > 0n) {
-      // Check current balance if account exists
+      // Always get rent-exempt minimum
+      const rentExempt = BigInt(await connection.getMinimumBalanceForRentExemption(165));
       let requiredLamports = wsolHandling.amount;
-      if (wsolAccountInfo) {
+      if (!wsolAccountInfo) {
+        // Account does not exist, must fund with rent-exemption + swap amount
+        requiredLamports = wsolHandling.amount + rentExempt;
+      } else {
+        // Account exists, only top up if needed
         const currentLamports = BigInt(wsolAccountInfo.lamports);
         if (currentLamports < wsolHandling.amount) {
           requiredLamports = wsolHandling.amount - currentLamports;
