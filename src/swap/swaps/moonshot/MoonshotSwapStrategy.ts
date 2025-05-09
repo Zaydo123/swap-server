@@ -7,6 +7,7 @@ import { prepareTokenAccounts } from '../../../utils/tokenAccounts';
 import { calculateSendyFee, makeSendyFeeInstruction } from '../../../utils/feeUtils';
 import { addWsolUnwrapInstructionIfNeeded } from '../../../utils/tokenAccounts';
 import { FEE_RECIPIENT, SENDY_FEE_ACCOUNT } from '../../constants';
+import { addCloseTokenAccountInstructionIfSellAll } from '../../../utils/tokenAccounts';
 
 export class MoonshotSwapStrategy implements ISwapStrategy {
     // Note: Moonshot SDK instance is created within generateSwapInstructions now
@@ -243,20 +244,15 @@ export class MoonshotSwapStrategy implements ISwapStrategy {
         });
 
         // Add close token account instruction if selling all tokens
-        // The Moonshot SDK may already include a close instruction, 
-        // so we need to be careful not to add a duplicate one
         if (transactionDetails.params.type === 'sell') {
-            // Skip adding our own close instruction for now
-            // The CloseAccount instruction in the transaction is failing
-            // Most likely because the Moonshot SDK is adding its own close instruction
-            // but in an order that doesn't work correctly
-            
-            // console.log('Skipping token account close instruction for Moonshot - letting the swap handle token management');
-            
-            // If we need to add back the close account logic in the future, we should ensure:
-            // 1. The account being closed is actually empty
-            // 2. We're not adding a duplicate close instruction for the same account
-            // 3. The close instruction comes after all token transfers
+            await addCloseTokenAccountInstructionIfSellAll({
+                connection,
+                inputMint: transactionDetails.params.inputMint,
+                amount: transactionDetails.params.amount,
+                userPublicKey: new PublicKey(transactionDetails.params.userWalletAddress),
+                instructions: allInstructions,
+                isSellOperation: true
+            });
         }
 
         return {

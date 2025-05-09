@@ -4,9 +4,6 @@ import { TransactionProps, ISwapStrategy, SwapStrategyDependencies, GenerateInst
 import { getSwapStrategy } from './swaps/router';
 import { generateAndCompileTransaction } from './swap';
 import dotenv from 'dotenv';
-import { maybeCloseEmptyTokenAccount, addCloseTokenAccountInstructionIfSellAll } from '../utils/tokenAccounts';
-import { SENDY_FEE_ACCOUNT } from './constants';
-import { getAssociatedTokenAddress, createCloseAccountInstruction } from '@solana/spl-token';
 
 dotenv.config();
 
@@ -143,7 +140,8 @@ export async function handleSwapRequest(req: Request, res: Response): Promise<vo
             
             // Compile the single transaction for non-API strategies
             const userPublicKey = new PublicKey(transactionDetails.params.userWalletAddress);
-            const feeLamports = instructionResult.sendyFeeLamports ? Number(instructionResult.sendyFeeLamports) : 0;
+            // Set feeLamports to 0 to avoid double-charging; strategy already includes fee instruction
+            const feeLamports = 0;
             const priorityFeeMicroLamports = transactionDetails.params.priorityFee ? transactionDetails.params.priorityFee * 1_000_000 : 0;
 
             const compiledResult = await generateAndCompileTransaction(

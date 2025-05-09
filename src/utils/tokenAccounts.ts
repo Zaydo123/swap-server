@@ -37,11 +37,24 @@ export async function prepareTokenAccounts({
     }
     instructions.push(createSyncNativeInstruction(wsolAta));
     if (wsolHandling.amount && wsolHandling.amount > 0n) {
-      instructions.push(SystemProgram.transfer({
-        fromPubkey: userPublicKey,
-        toPubkey: wsolAta,
-        lamports: Number(wsolHandling.amount),
-      }));
+      // Check current balance if account exists
+      let requiredLamports = wsolHandling.amount;
+      if (wsolAccountInfo) {
+        const currentLamports = BigInt(wsolAccountInfo.lamports);
+        if (currentLamports < wsolHandling.amount) {
+          requiredLamports = wsolHandling.amount - currentLamports;
+        } else {
+          requiredLamports = 0n; // Already has enough
+        }
+      }
+      // Only transfer if needed
+      if (requiredLamports > 0n) {
+        instructions.push(SystemProgram.transfer({
+          fromPubkey: userPublicKey,
+          toPubkey: wsolAta,
+          lamports: Number(requiredLamports),
+        }));
+      }
     }
   }
   if (wsolHandling && wsolHandling.unwrap) {

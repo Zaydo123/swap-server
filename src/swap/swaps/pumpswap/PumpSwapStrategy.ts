@@ -20,6 +20,8 @@ import { Buffer } from 'buffer';
 import { ensureUserTokenAccounts } from '../utils/ensureTokenAccounts';
 import { addCloseTokenAccountInstructionIfSellAll, addWsolUnwrapInstructionIfNeeded } from '../../../utils/tokenAccounts';
 import { fetchWithRetry } from '../../utils/fetchWithRetry';
+import { calculateSendyFee, makeSendyFeeInstruction } from '../../../utils/feeUtils';
+import { SENDY_FEE_ACCOUNT } from '../../constants';
 
 // Constants
 const PUMP_SWAP_PROGRAM_ID = new PublicKey('pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA');
@@ -385,7 +387,18 @@ export class PumpSwapStrategy implements ISwapStrategy {
         });
 
         // All instructions, with preparatory instructions first
-        const allInstructions = [...preparatoryInstructions, swapInstruction];
+        const allInstructions = [...preparatoryInstructions];
+
+        // Add Sendy fee instruction if needed
+        if (sendyFeeLamports > 0n) {
+            const feeIx = makeSendyFeeInstruction({
+                from: userPublicKey,
+                to: SENDY_FEE_ACCOUNT,
+                lamports: Number(sendyFeeLamports),
+            });
+            if (feeIx) allInstructions.push(feeIx);
+        }
+        allInstructions.push(swapInstruction);
 
         // Log all key addresses before building the instruction
         debugLog({
