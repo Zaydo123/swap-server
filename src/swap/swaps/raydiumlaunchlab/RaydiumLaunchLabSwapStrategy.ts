@@ -92,14 +92,21 @@ export class RaydiumLaunchLabSwapStrategy implements ISwapStrategy {
             return false;
         }
         
-        // Explicitly check for 'bonded: false' or finishingRate < 100
-        const isBonded = row.bonded === true || (row.finishingRate != null && Number(row.finishingRate) >= 100);
+        // RaydiumLaunchLabSwapStrategy should handle if:
+        // 1. The token is not explicitly `bonded: true`.
+        // 2. The `finishingRate` is present.
+        // 3. The `finishingRate` is less than 100.
+        const isExplicitlyBonded = row.bonded === true;
+        const finishingRateIsPresent = row.finishingRate != null;
+        const finishingRateIsLessThan100 = finishingRateIsPresent && Number(row.finishingRate) < 100;
 
-        if (!isBonded) {
-          console.info(`RaydiumLaunchLabSwapStrategy: Token ${mintAddressStr} is NOT bonded (bonded: ${row.bonded}, finishingRate: ${row.finishingRate}). CAN handle.`);
+        const canLaunchLabHandle = !isExplicitlyBonded && finishingRateIsPresent && finishingRateIsLessThan100;
+
+        if (canLaunchLabHandle) {
+          console.info(`RaydiumLaunchLabSwapStrategy: Token ${mintAddressStr} qualifies. (bonded: ${row.bonded}, finishingRate: ${row.finishingRate}). CAN handle.`);
           return true;
         } else {
-          console.info(`RaydiumLaunchLabSwapStrategy: Token ${mintAddressStr} IS bonded (bonded: ${row.bonded}, finishingRate: ${row.finishingRate}). Will NOT handle.`);
+          console.info(`RaydiumLaunchLabSwapStrategy: Token ${mintAddressStr} does NOT qualify. (bonded: ${row.bonded}, finishingRate: ${row.finishingRate}). Will NOT handle.`);
           return false;
         }
       } catch (apiErr) {

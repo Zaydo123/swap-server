@@ -110,7 +110,73 @@ export class RaydiumSwapStrategy implements ISwapStrategy {
             }
         }
 
-        // Final check: Verify if the token exists on standard Raydium pools
+        // Check Raydium Launchpad API for token status
+        // If it's bonded: true or finishingRate: 100, RaydiumSwapStrategy should try to handle it.
+        const launchpadApiUrl = `https://launch-mint-v1.raydium.io/get/by/mints?ids=${tokenMint}`;
+        try {
+            console.log(`RaydiumSwapStrategy: Checking Launchpad API status for ${tokenMint} via ${launchpadApiUrl}`);
+            const raydium = await Raydium.load({ // Ensure Raydium SDK is loaded for this check
+                connection: dependencies.connection, 
+                cluster: 'mainnet', 
+                disableFeatureCheck: true,
+            });
+
+            const launchpadResponse = await fetchWithRetry(launchpadApiUrl);
+            if (launchpadResponse.ok) {
+                const launchpadData = await launchpadResponse.json();
+                const row = launchpadData?.data?.rows?.[0];
+                if (row) {
+                    const isBonded = row.bonded === true;
+                    const isFinishingRateComplete = row.finishingRate != null && Number(row.finishingRate) >= 100;
+                    
+                    if (isBonded || isFinishingRateComplete) {
+                        console.log(`RaydiumSwapStrategy: Token ${tokenMint} appears graduated on Launchpad API (bonded: ${row.bonded}, finishingRate: ${row.finishingRate}).`);
+                        
+                        // Priority 1: Check migrateAmmId if present
+                        if (row.migrateAmmId) {
+                            console.log(`RaydiumSwapStrategy: Launchpad API provided migrateAmmId: ${row.migrateAmmId}. Verifying...`);
+                            try {
+                                const migratedPoolInfo = await raydium.liquidity.getPoolInfoFromRpc({ poolId: row.migrateAmmId });
+                                if (migratedPoolInfo && migratedPoolInfo.poolInfo) {
+                                    console.log(`RaydiumSwapStrategy: Successfully verified migrateAmmId ${row.migrateAmmId}. CAN handle.`);
+                                    return true;
+                                }
+                            } catch (migratedPoolError) {
+                                console.warn(`RaydiumSwapStrategy: Failed to verify migrateAmmId ${row.migrateAmmId}:`, migratedPoolError, ". Checking row.poolId as fallback.");
+                            }
+                        }
+                        
+                        // Priority 2: Check poolId if migrateAmmId failed or wasn't present
+                        if (row.poolId) {
+                            console.log(`RaydiumSwapStrategy: Launchpad API provided poolId: ${row.poolId} (checking as fallback or if migrateAmmId absent). Verifying...`);
+                            try {
+                                const specificPoolInfo = await raydium.liquidity.getPoolInfoFromRpc({ poolId: row.poolId });
+                                if (specificPoolInfo && specificPoolInfo.poolInfo) {
+                                    console.log(`RaydiumSwapStrategy: Successfully verified poolId ${row.poolId} from Launchpad API. CAN handle.`);
+                                    return true;
+                                }
+                            } catch (specificPoolError) {
+                                console.warn(`RaydiumSwapStrategy: Failed to verify specific poolId ${row.poolId} from Launchpad API:`, specificPoolError, ". Falling back to broader search.");
+                            }
+                        }
+                        // If specific poolId checks fail or no IDs, fall through to broader SDK check below
+                        console.log(`RaydiumSwapStrategy: Proceeding to broader SDK pool check for graduated token ${tokenMint}.`);
+                    } else {
+                        // If not bonded and finishingRate < 100, it's for LaunchLab, so RaydiumSwapStrategy should NOT handle.
+                        console.log(`RaydiumSwapStrategy: Token ${tokenMint} is still active on Launchpad (bonded: ${row.bonded}, finishingRate: ${row.finishingRate}). Rejecting for Raydium standard pools.`);
+                        return false;
+                    }
+                } else {
+                    console.log(`RaydiumSwapStrategy: No data row for ${tokenMint} in Launchpad API response. Proceeding to final SDK check.`);
+                }
+            } else {
+                console.warn(`RaydiumSwapStrategy: Launchpad API check failed (${launchpadResponse.status}) for ${tokenMint}. Proceeding to final SDK check.`);
+            }
+        } catch (apiErr) {
+            console.warn(`RaydiumSwapStrategy: Error checking Launchpad API for ${tokenMint}:`, apiErr, ". Proceeding to final SDK check.");
+        }
+
+        // Final check: Verify if the token exists on standard Raydium pools (broader search)
         console.log(`RaydiumStrategy: Performing final check for ${tokenMint} on standard Raydium pools...`);
         try {
             // Initialize Raydium SDK instance for the check
