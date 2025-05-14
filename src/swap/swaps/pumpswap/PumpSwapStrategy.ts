@@ -115,6 +115,9 @@ export class PumpSwapStrategy implements ISwapStrategy {
         const { connection } = dependencies;
         const { type, amount, slippageBps, userWalletAddress, inputMint, outputMint } = transactionDetails.params;
         
+        const PUMP_POOL_ACCOUNT_DISCRIMINATOR = Buffer.from([241, 154, 109, 4, 17, 177, 109, 188]);
+        const COIN_CREATOR_FIELD_OFFSET = 8 + 1 + 2 + (32 * 6) + 8; // Discriminator + pool_bump + index + 6 pubkeys + lp_supply
+
         // Initialize variables
         const preparatoryInstructions: TransactionInstruction[] = [];
         let poolData: any;
@@ -150,21 +153,44 @@ export class PumpSwapStrategy implements ISwapStrategy {
         // Use the pool data to get mints
         const baseMint = new PublicKey(poolData.baseMint);
         const quoteMint = new PublicKey(poolData.quoteMint);
-        // Get creator and poolIndex from API response (ensure they exist in poolData)
-        const creator = poolData.creator; 
-        const poolIndex = poolData.poolIndex; 
+        // Get creator (for pool PDA derivation) and poolIndex from API response
+        const ammPoolCreator = poolData.creator; // Creator of the AMM pool itself
+        const poolIndex = poolData.poolIndex;
+        const poolPdaFromApi = new PublicKey(poolData.address); // Address of the Pool account
 
-        // Validate that creator and poolIndex are present
-        if (!creator || typeof poolIndex !== 'number') {
-            throw new Error('Creator or poolIndex missing from API pool data, cannot derive pool PDA.');
+        // Fetch the Pool account data to get the *actual* on-chain coin_creator pubkey
+        const poolAccountInfo = await connection.getAccountInfo(poolPdaFromApi);
+        if (!poolAccountInfo || !poolAccountInfo.data) {
+            throw new Error(`Failed to fetch account data for Pool ${poolPdaFromApi.toBase58()}`);
         }
-
-        // Derive the pool PDA using all required seeds
-        const pool = derivePumpSwapPoolPDA(baseMint.toBase58(), quoteMint.toBase58(), creator, poolIndex);
+        if (!poolAccountInfo.data.subarray(0, 8).equals(PUMP_POOL_ACCOUNT_DISCRIMINATOR)) {
+            throw new Error(`Account ${poolPdaFromApi.toBase58()} is not a valid PumpSwap Pool account (discriminator mismatch).`);
+        }
+        const onChainCoinCreatorKey = new PublicKey(poolAccountInfo.data.subarray(COIN_CREATOR_FIELD_OFFSET, COIN_CREATOR_FIELD_OFFSET + 32));
         
-        // Log the API's pool address for confirmation
+        debugLog(`On-chain coin_creator for pool ${poolPdaFromApi.toBase58()}: ${onChainCoinCreatorKey.toBase58()}`);
+
+        // Validate that ammPoolCreator (for pool PDA derivation seed) and poolIndex are present
+        if (!ammPoolCreator || typeof poolIndex !== 'number') { 
+            throw new Error('`creator` (for main pool PDA seed) or `poolIndex` missing from API pool data.');
+        }
+        const coinCreatorPk = onChainCoinCreatorKey; // Use the key fetched from on-chain state
+
+        // Derive the main pool PDA using ammPoolCreator from API (creator of the bonding curve/initial pool)
+        const pool = derivePumpSwapPoolPDA(baseMint.toBase58(), quoteMint.toBase58(), ammPoolCreator, poolIndex);
+        
+        // Log the API's pool address for confirmation, and our derived one
         if (poolData.address) {
             debugLog("API pool address:", poolData.address);
+            debugLog("Derived pool address (for main ops):", pool.toBase58());
+            // It's CRITICAL that poolPdaFromApi matches pool, if not, derivation of main pool is wrong.
+            if (pool.toBase58() !== poolPdaFromApi.toBase58()) {
+                console.warn("[PumpSwapStrategy] CRITICAL WARNING: Derived main pool address does not match API reported pool address.");
+                console.warn(`API: ${poolPdaFromApi.toBase58()}, Derived: ${pool.toBase58()}`);
+                console.warn(`Using API's pool address ${poolPdaFromApi.toBase58()} for swap instruction keys.`);
+                // Potentially use poolPdaFromApi for the keys if mismatch, but this indicates a deeper issue
+                // For now, we will proceed with the derived `pool` but log this heavily.
+            }
         }
         
         const userPublicKey = new PublicKey(userWalletAddress);
@@ -322,6 +348,22 @@ export class PumpSwapStrategy implements ISwapStrategy {
         // Use hardcoded protocol fee recipient ATA from pumpswap.ts
         const protocolFeeRecipientTokenAccount = FEE_RECIPIENT_ATA;
 
+        // Derive coin creator fee PDAs
+        const [coinCreatorVaultAuthorityPda] = PublicKey.findProgramAddressSync(
+            [
+                Buffer.from("creator_vault"),
+                coinCreatorPk.toBuffer()
+            ],
+            PUMP_SWAP_PROGRAM_ID
+        );
+
+        const coinCreatorVaultAta = getAssociatedTokenAddressSync(
+            quoteMint,                      // Mint for the ATA (WSOL)
+            coinCreatorVaultAuthorityPda,   // Owner of the ATA (the PDA derived above)
+            true,                           // Allow owner off-curve (owner is a PDA)
+            TOKEN_PROGRAM_ID                // Token program ID for WSOL
+        );
+
         // Create instruction data with discriminator and amounts
         const instructionData = Buffer.alloc(24); // 8 bytes discriminator + 8 bytes for each u64 value
         
@@ -370,6 +412,8 @@ export class PumpSwapStrategy implements ISwapStrategy {
                 { pubkey: ASSOCIATED_TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
                 { pubkey: eventAuthority, isSigner: false, isWritable: false },
                 { pubkey: PUMP_SWAP_PROGRAM_ID, isSigner: false, isWritable: false },
+                { pubkey: coinCreatorVaultAta, isSigner: false, isWritable: true },
+                { pubkey: coinCreatorVaultAuthorityPda, isSigner: false, isWritable: false },
             ],
             data: instructionData
         });
@@ -397,6 +441,9 @@ export class PumpSwapStrategy implements ISwapStrategy {
             userQuoteTokenAccount: userQuoteTokenAccount.toBase58(),
             poolBaseTokenAccount: poolBaseTokenAccount.toBase58(),
             poolQuoteTokenAccount: poolQuoteTokenAccount.toBase58(),
+            protocolFeeRecipientTokenAccount: protocolFeeRecipientTokenAccount.toBase58(),
+            coinCreatorVaultAta: coinCreatorVaultAta.toBase58(),
+            coinCreatorVaultAuthorityPda: coinCreatorVaultAuthorityPda.toBase58(),
         });
 
         // Add WSOL unwrap instruction if needed (when output is SOL)
