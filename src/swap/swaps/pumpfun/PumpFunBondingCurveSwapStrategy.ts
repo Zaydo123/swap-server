@@ -204,11 +204,6 @@ export class PumpFunBondingCurveSwapStrategy implements ISwapStrategy {
         const bondingCurveSeeds = [Buffer.from('bonding-curve'), pumpTokenMintAddress.toBuffer()];
         const [derivedBondingCurve,] = PublicKey.findProgramAddressSync(bondingCurveSeeds, CNST.PUMP_FUN_PROGRAM);
 
-        // Validate against API data (optional but recommended)
-        if (data.bonding_curve && derivedBondingCurve.toBase58() !== data.bonding_curve) {
-            debugLog(`Derived bonding curve PDA ${derivedBondingCurve.toBase58()} does not match API bonding curve ${data.bonding_curve} for token ${pumpTokenMintAddress.toBase58()}. Using derived PDA.`);
-        }
-
         const BONDING_CURVE = derivedBondingCurve; // Use the derived address
 
         // Derive the associated bonding curve address (Token Account owned by bonding curve)
@@ -218,21 +213,37 @@ export class PumpFunBondingCurveSwapStrategy implements ISwapStrategy {
             pumpTokenMintAddress.toBuffer(),
         ];
         const [derivedAssocBondingCurve,] = PublicKey.findProgramAddressSync(assocBondingCurveSeeds, ASSOCIATED_TOKEN_PROGRAM_ID);
-
-        // Validate against API data (optional but recommended)
-        if (data.associated_bonding_curve && derivedAssocBondingCurve.toBase58() !== data.associated_bonding_curve) {
-            debugLog(`Derived associated bonding curve PDA ${derivedAssocBondingCurve.toBase58()} does not match API value ${data.associated_bonding_curve} for token ${pumpTokenMintAddress.toBase58()}. Using derived PDA.`);
-        }
-
         const ASSOCIATED_BONDING_CURVE = derivedAssocBondingCurve; // Use the derived address
 
         // Get user's ATA - Pump requires allowOwnerOffCurve = true
-        // This ATA is for the PUMP token
         const userAssociatedTokenAccount = await getAssociatedTokenAddress(
             pumpTokenMintAddress,
             payer,
             true // allowOwnerOffCurve = true for pump bonding curve
         );
+
+        // --- NEW: Fetch BondingCurve account to get creator for PDA ---
+        let creatorPubkey: PublicKey;
+        try {
+            const bondingCurveAccountInfo = await connection.getAccountInfo(BONDING_CURVE);
+            if (!bondingCurveAccountInfo) throw new Error('Could not fetch BondingCurve account');
+            // The BondingCurve struct is: [8 discriminator][u64][u64][u64][u64][u64][bool][creator pubkey (32 bytes)]
+            // So creator pubkey starts at offset 8+8*5+1 = 49
+            creatorPubkey = new PublicKey(bondingCurveAccountInfo.data.slice(49, 81));
+        } catch (e) {
+            throw new Error('Failed to fetch or parse BondingCurve account for creator: ' + (e instanceof Error ? e.message : String(e)));
+        }
+
+        // Derive creator_vault PDA
+        const [creatorVaultPda,] = PublicKey.findProgramAddressSync([
+            Buffer.from('creator-vault'),
+            creatorPubkey.toBuffer(),
+        ], CNST.PUMP_FUN_PROGRAM);
+
+        // Derive event_authority PDA
+        const [eventAuthorityPda,] = PublicKey.findProgramAddressSync([
+            Buffer.from('__event_authority'),
+        ], CNST.PUMP_FUN_PROGRAM);
 
         // Convert validated pump.fun data to BigInt safely
         const virtualSolReserves = BigInt(String(data.virtual_sol_reserves)); 
@@ -282,8 +293,7 @@ export class PumpFunBondingCurveSwapStrategy implements ISwapStrategy {
             bufferFromUInt64(solAmountLamports.toString()), // Convert bigint to string
         ]);
 
-        // Keys based on inspecting transactions and original code
-        // TEMPORARY FIX: Use specific key lists observed for BUY/SELL
+        // --- UPDATED BUY KEYS TO MATCH NEW IDL ---
         const buyKeys = [
             { pubkey: CNST.GLOBAL, isSigner: false, isWritable: false },
             { pubkey: CNST.FEE_RECIPIENT, isSigner: false, isWritable: true },
@@ -294,23 +304,24 @@ export class PumpFunBondingCurveSwapStrategy implements ISwapStrategy {
             { pubkey: payer, isSigner: true, isWritable: true },
             { pubkey: CNST.SYSTEM_PROGRAM_ID, isSigner: false, isWritable: false },
             { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
-            { pubkey: CNST.RENT, isSigner: false, isWritable: false },
-            { pubkey: CNST.PUMP_FUN_ACCOUNT, isSigner: false, isWritable: false },
+            { pubkey: creatorVaultPda, isSigner: false, isWritable: true },
+            { pubkey: eventAuthorityPda, isSigner: false, isWritable: false },
             { pubkey: CNST.PUMP_FUN_PROGRAM, isSigner: false, isWritable: false },
         ];
+        // --- UPDATED SELL KEYS TO MATCH NEW IDL ---
         const sellKeys = [
-             { pubkey: CNST.GLOBAL, isSigner: false, isWritable: false },
-             { pubkey: CNST.FEE_RECIPIENT, isSigner: false, isWritable: true },
-             { pubkey: pumpTokenMintAddress, isSigner: false, isWritable: false },
-             { pubkey: BONDING_CURVE, isSigner: false, isWritable: true },
-             { pubkey: ASSOCIATED_BONDING_CURVE, isSigner: false, isWritable: true },
-             { pubkey: userAssociatedTokenAccount, isSigner: false, isWritable: true },
-             { pubkey: payer, isSigner: true, isWritable: true },
-             { pubkey: CNST.SYSTEM_PROGRAM_ID, isSigner: false, isWritable: false },
-             { pubkey: CNST.ASSOC_TOKEN_ACC_PROG, isSigner: false, isWritable: false }, // Note: ATA Prog ID for Sell
-             { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
-             { pubkey: CNST.PUMP_FUN_ACCOUNT, isSigner: false, isWritable: false },
-             { pubkey: CNST.PUMP_FUN_PROGRAM, isSigner: false, isWritable: false },
+            { pubkey: CNST.GLOBAL, isSigner: false, isWritable: false },
+            { pubkey: CNST.FEE_RECIPIENT, isSigner: false, isWritable: true },
+            { pubkey: pumpTokenMintAddress, isSigner: false, isWritable: false },
+            { pubkey: BONDING_CURVE, isSigner: false, isWritable: true },
+            { pubkey: ASSOCIATED_BONDING_CURVE, isSigner: false, isWritable: true },
+            { pubkey: userAssociatedTokenAccount, isSigner: false, isWritable: true },
+            { pubkey: payer, isSigner: true, isWritable: true },
+            { pubkey: CNST.SYSTEM_PROGRAM_ID, isSigner: false, isWritable: false },
+            { pubkey: creatorVaultPda, isSigner: false, isWritable: true },
+            { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+            { pubkey: eventAuthorityPda, isSigner: false, isWritable: false },
+            { pubkey: CNST.PUMP_FUN_PROGRAM, isSigner: false, isWritable: false },
         ];
 
         const swapInstruction: TransactionInstruction = {
