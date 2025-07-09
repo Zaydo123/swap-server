@@ -30,7 +30,7 @@ export function makeSendyFeeInstruction({ from, to, lamports }:{ from: PublicKey
  * @returns Tip amount in lamports
  */
 export function calculateAstralaneTip(): number {
-  return 1_000_000; // 0.001 SOL in lamports
+  return 10_000_000; // 0.001 SOL in lamports
 }
 
 /**
