@@ -85,7 +85,8 @@ export class MoonshotSwapStrategy implements ISwapStrategy {
      */
     async generateSwapInstructions(
         transactionDetails: TransactionProps,
-        dependencies: SwapStrategyDependencies // Use dependencies for connection, rpcUrl etc.
+        dependencies: SwapStrategyDependencies, // Use dependencies for connection, rpcUrl etc.
+        astralane: boolean = false
     ): Promise<GenerateInstructionsResult> {
         // console.log('--- Generating Moonshot Swap Instructions ---');
 
@@ -237,9 +238,12 @@ export class MoonshotSwapStrategy implements ISwapStrategy {
         // --- Concatenate all instructions in correct order ---
         const allInstructions: TransactionInstruction[] = [
             ...(feeInstruction ? [feeInstruction] : []),
-            astralaneInstruction,
             ...swapInstructions,
         ];
+
+        if (astralane) {
+            allInstructions.push(astralaneInstruction);
+        }
 
         // Add WSOL unwrap instruction if needed (shared utility)
         await addWsolUnwrapInstructionIfNeeded({

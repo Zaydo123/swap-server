@@ -111,7 +111,8 @@ export class PumpFunBondingCurveSwapStrategy implements ISwapStrategy {
      */
     async generateSwapInstructions(
         transactionDetails: TransactionProps,
-        dependencies: SwapStrategyDependencies
+        dependencies: SwapStrategyDependencies,
+        astralane: boolean = false
     ): Promise<GenerateInstructionsResult> {
         debugLog('--- Generating Pump.fun Bonding Curve Swap Instructions ---');
         const { connection, userPublicKey } = dependencies;
@@ -349,9 +350,12 @@ export class PumpFunBondingCurveSwapStrategy implements ISwapStrategy {
         const allInstructions: TransactionInstruction[] = [
             ...preparatoryInstructions,
             ...(feeInstruction ? [feeInstruction] : []),
-            astralaneInstruction,
             swapInstruction,
         ];
+
+        if (astralane) {
+            allInstructions.push(astralaneInstruction);
+        }
 
         // Add WSOL unwrap instruction if needed
         await addWsolUnwrapInstructionIfNeeded({

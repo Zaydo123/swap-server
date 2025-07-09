@@ -218,7 +218,8 @@ export class RaydiumSwapStrategy implements ISwapStrategy {
 
     async generateSwapInstructions(
         transactionDetails: TransactionProps,
-        dependencies: SwapStrategyDependencies
+        dependencies: SwapStrategyDependencies,
+        astralane: boolean = false
     ): Promise<GenerateInstructionsResult & { versionedTransaction?: VersionedTransaction }> {
         const { inputMint, outputMint, amount, slippageBps, type } = transactionDetails.params;
         const userPublicKey = dependencies.userPublicKey;
@@ -385,7 +386,10 @@ export class RaydiumSwapStrategy implements ISwapStrategy {
                 const astralaneInstruction = makeAstralaneTipInstruction({
                     from: userPublicKey,
                 });
-                allInstructions.push(astralaneInstruction);
+
+                if (astralane) {
+                    allInstructions.push(astralaneInstruction);
+                }
                 
                 // 2. Add original instructions
                 allInstructions.push(...originalInstructions);

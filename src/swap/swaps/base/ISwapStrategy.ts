@@ -59,6 +59,7 @@ export interface ISwapStrategy {
    */
   generateSwapInstructions(
     transactionDetails: TransactionProps,
-    dependencies: SwapStrategyDependencies
+    dependencies: SwapStrategyDependencies,
+    astralane: boolean
   ): Promise<GenerateInstructionsResult>;
 }

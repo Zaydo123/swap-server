@@ -58,6 +58,8 @@ export async function handleSwapRequest(req: Request, res: Response): Promise<vo
         return;
     }
 
+    const astralane = paramsFromBody.astralane;
+
     // Construct the full TransactionProps object
     const transactionDetails: TransactionProps = {
         params: {
@@ -105,7 +107,7 @@ export async function handleSwapRequest(req: Request, res: Response): Promise<vo
         const { blockhash: recentBlockhash } = await connection.getLatestBlockhash();
 
         // --- Generate Instructions using Strategy --- 
-        const instructionResult: GenerateInstructionsResult = await selectedStrategy.generateSwapInstructions(transactionDetails, strategyDeps);
+        const instructionResult: GenerateInstructionsResult = await selectedStrategy.generateSwapInstructions(transactionDetails, strategyDeps, astralane);
 
         if (!instructionResult.success) {
               console.error(`Strategy failed to generate instructions: ${instructionResult.error}`); 

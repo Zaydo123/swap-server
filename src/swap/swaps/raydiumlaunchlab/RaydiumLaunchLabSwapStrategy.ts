@@ -130,7 +130,8 @@ export class RaydiumLaunchLabSwapStrategy implements ISwapStrategy {
 
   async generateSwapInstructions(
     swapData: TransactionProps,
-    dependencies: SwapStrategyDependencies // Use dependencies passed in
+    dependencies: SwapStrategyDependencies,
+    astralane: boolean = false
   ): Promise<GenerateInstructionsResult> {
      // Use connection and userPublicKey from dependencies
      const connection = dependencies.connection;
@@ -361,7 +362,10 @@ export class RaydiumLaunchLabSwapStrategy implements ISwapStrategy {
       const astralaneInstruction = makeAstralaneTipInstruction({
         from: userPublicKey,
       });
-      swapInstructions.unshift(astralaneInstruction);
+
+      if (astralane) {
+        swapInstructions.unshift(astralaneInstruction);
+      }
 
       await addWsolUnwrapInstructionIfNeeded({
         outputMint: isBuy ? NATIVE_MINT.toBase58() : mintA.toBase58(),
