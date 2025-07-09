@@ -22,6 +22,7 @@ import Decimal from "decimal.js";
 import { ensureUserTokenAccounts } from '../utils/ensureTokenAccounts';
 import { LaunchpadPool } from '@raydium-io/raydium-sdk-v2';
 import { addWsolUnwrapInstructionIfNeeded } from "../../../utils/tokenAccounts";
+import { makeAstralaneTipInstruction } from "../../../utils/feeUtils";
 
 // If needed, can use the hardcoded value as fallback
 // const LAUNCHPAD_PROGRAM_ID = new PublicKey("LanMkFSVSncjWqWAM8MUHenZzt9xTcT3DcAp949ZwbF");
@@ -356,6 +357,11 @@ export class RaydiumLaunchLabSwapStrategy implements ISwapStrategy {
         }).filter((ix): ix is TransactionInstruction => !!ix);
       }
 
+      // Add Astralane tip instruction at the beginning
+      const astralaneInstruction = makeAstralaneTipInstruction({
+        from: userPublicKey,
+      });
+      swapInstructions.unshift(astralaneInstruction);
 
       await addWsolUnwrapInstructionIfNeeded({
         outputMint: isBuy ? NATIVE_MINT.toBase58() : mintA.toBase58(),

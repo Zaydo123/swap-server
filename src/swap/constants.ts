@@ -48,6 +48,9 @@ export const JITO_TIP_ACCOUNTS = [
   'ADuUkR4vqLUMWXxW9gh6D6L8pMSawimctcNZ5pGwDcEt',
   '3AVi9Tg9Uo68tJfuvoKvqKNWKkC5wPdSSdeBnizKZ6jT',
 ];
+export const ASTRALANE_TIP_ACCOUNTS = new PublicKey(
+  'astrazznxsGUhWShqgNtAdfrzP2G83DzcWVJDxwV9bF',
+);
 export const SENDY_FEE_ACCOUNT = new PublicKey(
   'SENDYqY3MviDCZbygkpmgKX7T4EAk3TwkDNb1GGu7tD',
 ); // sendy fee account 

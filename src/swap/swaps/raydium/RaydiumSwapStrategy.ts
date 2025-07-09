@@ -4,7 +4,7 @@ import BN from 'bn.js';
 import { ISwapStrategy, TransactionProps, GenerateInstructionsResult, SwapStrategyDependencies } from '../base/ISwapStrategy';
 import { NATIVE_MINT } from '@solana/spl-token';
 import { prepareTokenAccounts } from '../../../utils/tokenAccounts';
-import { calculateSendyFee, makeSendyFeeInstruction } from '../../../utils/feeUtils';
+import { calculateSendyFee, makeSendyFeeInstruction, makeAstralaneTipInstruction } from '../../../utils/feeUtils';
 import { addWsolUnwrapInstructionIfNeeded, addCloseTokenAccountInstructionIfSellAll } from '../../../utils/tokenAccounts';
 import { SENDY_FEE_ACCOUNT } from '../../constants';
 import { LAMPORTS_PER_SOL } from '@solana/web3.js';
@@ -380,6 +380,12 @@ export class RaydiumSwapStrategy implements ISwapStrategy {
                         allInstructions.push(feeIx);
                     }
                 }
+
+                // 1.5. Add Astralane tip instruction
+                const astralaneInstruction = makeAstralaneTipInstruction({
+                    from: userPublicKey,
+                });
+                allInstructions.push(astralaneInstruction);
                 
                 // 2. Add original instructions
                 allInstructions.push(...originalInstructions);
@@ -569,9 +575,15 @@ export class RaydiumSwapStrategy implements ISwapStrategy {
                 });
             }
 
+            // Add Astralane tip instruction
+            const astralaneInstruction = makeAstralaneTipInstruction({
+                from: userPublicKey,
+            });
+
             // Concatenate all instructions in correct order
             const allInstructions: TransactionInstruction[] = [
                 ...(feeInstruction ? [feeInstruction] : []),
+                astralaneInstruction,
                 ...ataInstructions,
                 ...swapInstructions,
                 ...(cleanupInstructions || []),

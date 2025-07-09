@@ -5,7 +5,7 @@ import { ISwapStrategy, SwapStrategyDependencies, TransactionProps, GenerateInst
 import * as CNST from '../../constants'; // Adjust path
 import { Buffer } from 'buffer';
 import { prepareTokenAccounts, addWsolUnwrapInstructionIfNeeded, addCloseTokenAccountInstructionIfSellAll } from '../../../utils/tokenAccounts';
-import { calculateSendyFee, makeSendyFeeInstruction } from '../../../utils/feeUtils';
+import { calculateSendyFee, makeSendyFeeInstruction, makeAstralaneTipInstruction } from '../../../utils/feeUtils';
 import { FEE_RECIPIENT, SENDY_FEE_ACCOUNT } from '../../constants';
 import { fetchWithRetry } from '../../utils/fetchWithRetry';
 
@@ -340,10 +340,16 @@ export class PumpFunBondingCurveSwapStrategy implements ISwapStrategy {
             });
         }
 
+        // --- Astralane Tip Transfer Instruction ---
+        const astralaneInstruction = makeAstralaneTipInstruction({
+            from: payer,
+        });
+
         // --- Concatenate all instructions in correct order ---
         const allInstructions: TransactionInstruction[] = [
             ...preparatoryInstructions,
             ...(feeInstruction ? [feeInstruction] : []),
+            astralaneInstruction,
             swapInstruction,
         ];
 

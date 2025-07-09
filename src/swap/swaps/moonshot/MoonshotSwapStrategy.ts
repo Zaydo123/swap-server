@@ -4,7 +4,7 @@ import { LAMPORTS_PER_SOL } from '@solana/web3.js';
 import { ISwapStrategy, GenerateInstructionsResult, SwapStrategyDependencies, TransactionProps } from '../base/ISwapStrategy';
 import { NATIVE_MINT } from '@solana/spl-token';
 import { prepareTokenAccounts } from '../../../utils/tokenAccounts';
-import { calculateSendyFee, makeSendyFeeInstruction } from '../../../utils/feeUtils';
+import { calculateSendyFee, makeSendyFeeInstruction, makeAstralaneTipInstruction } from '../../../utils/feeUtils';
 import { addWsolUnwrapInstructionIfNeeded } from '../../../utils/tokenAccounts';
 import { FEE_RECIPIENT, SENDY_FEE_ACCOUNT } from '../../constants';
 import { addCloseTokenAccountInstructionIfSellAll } from '../../../utils/tokenAccounts';
@@ -229,9 +229,15 @@ export class MoonshotSwapStrategy implements ISwapStrategy {
             });
         }
 
+        // --- Astralane Tip Transfer Instruction ---
+        const astralaneInstruction = makeAstralaneTipInstruction({
+            from: new PublicKey(transactionDetails.params.userWalletAddress),
+        });
+
         // --- Concatenate all instructions in correct order ---
         const allInstructions: TransactionInstruction[] = [
             ...(feeInstruction ? [feeInstruction] : []),
+            astralaneInstruction,
             ...swapInstructions,
         ];
 

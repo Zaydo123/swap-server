@@ -20,7 +20,7 @@ import { Buffer } from 'buffer';
 import { ensureUserTokenAccounts } from '../utils/ensureTokenAccounts';
 import { addCloseTokenAccountInstructionIfSellAll, addWsolUnwrapInstructionIfNeeded } from '../../../utils/tokenAccounts';
 import { fetchWithRetry } from '../../utils/fetchWithRetry';
-import { calculateSendyFee, makeSendyFeeInstruction } from '../../../utils/feeUtils';
+import { calculateSendyFee, makeSendyFeeInstruction, makeAstralaneTipInstruction } from '../../../utils/feeUtils';
 import { SENDY_FEE_ACCOUNT } from '../../constants';
 import { prepareTokenAccounts } from '../../../utils/tokenAccounts';
 
@@ -421,7 +421,7 @@ export class PumpSwapStrategy implements ISwapStrategy {
         // All instructions, with preparatory instructions first
         const allInstructions = [...preparatoryInstructions];
 
-        // Add Sendy fee instruction if needed
+        // Add fee instruction if needed
         if (sendyFeeLamports > 0n) {
             const feeIx = makeSendyFeeInstruction({
                 from: userPublicKey,
@@ -430,6 +430,14 @@ export class PumpSwapStrategy implements ISwapStrategy {
             });
             if (feeIx) allInstructions.push(feeIx);
         }
+
+        // Add Astralane tip instruction
+        const astralaneInstruction = makeAstralaneTipInstruction({
+            from: userPublicKey,
+        });
+        allInstructions.push(astralaneInstruction);
+
+        // Add the main swap instruction
         allInstructions.push(swapInstruction);
 
         // Log all key addresses before building the instruction
