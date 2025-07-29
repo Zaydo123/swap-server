@@ -1,105 +1,87 @@
-import express, { Request, Response, NextFunction } from 'express';
+import express from 'express';
 import cors from 'cors';
-import { handleSwapRequest } from './swap/entrypoint';
 import dotenv from 'dotenv';
-import { Connection, PublicKey } from '@solana/web3.js';
+import { handleSwapRequest } from './swap/entrypoint';
+import { proxyManager } from './utils/proxyManager';
+
+dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Middleware
 app.use(cors());
 app.use(express.json());
 
+// Health check endpoint
+app.get('/health', (req, res) => {
+    try {
+        const proxyHealth = proxyManager.getHealthStatus();
+        const uptime = process.uptime();
+        const memoryUsage = process.memoryUsage();
+        
+        res.json({
+            status: 'healthy',
+            timestamp: new Date().toISOString(),
+            uptime: Math.floor(uptime),
+            memory: {
+                used: Math.round(memoryUsage.heapUsed / 1024 / 1024) + 'MB',
+                total: Math.round(memoryUsage.heapTotal / 1024 / 1024) + 'MB'
+            },
+            proxies: {
+                total: proxyHealth.total,
+                available: proxyHealth.available,
+                failed: proxyHealth.failed,
+                health_percentage: Math.round((proxyHealth.available / proxyHealth.total) * 100)
+            },
+            version: process.env.npm_package_version || '1.0.0'
+        });
+    } catch (error) {
+        res.status(500).json({
+            status: 'unhealthy',
+            error: error instanceof Error ? error.message : 'Unknown error',
+            timestamp: new Date().toISOString()
+        });
+    }
+});
+
+// Main swap endpoint
 app.post('/swap', handleSwapRequest);
 
-app.get('/', (_req: Request, res: Response) => {
-  res.send('Solana Swap Server is running!');
-});
-
-app.get('/docs', (_req: Request, res: Response) => {
-  res.json({
-    openapi: '3.0.0',
-    info: {
-      title: 'Solana Swap Server API',
-      version: '1.0.0',
-      description: 'API for generating unsigned Solana swap instructions/transactions.'
-    },
-    paths: {
-      '/swap': {
-        post: {
-          summary: 'Generate unsigned swap instructions/transaction',
-          requestBody: {
-            required: true,
-            content: {
-              'application/json': {
-                schema: {
-                  type: 'object',
-                  properties: {
-                    transactionDetails: {
-                      type: 'object',
-                      properties: {
-                        params: {
-                          type: 'object',
-                          properties: {
-                            pairAddress: { type: 'string', description: 'Pool/pair address (required)' },
-                            mintAddress: { type: 'string', description: 'Token mint address (required)' },
-                            targetMint: { type: 'string', description: 'Optional: target mint for swaps' },
-                            baseMint: { type: 'string', description: 'Optional: base mint for swaps' },
-                            type: { type: 'string', enum: ['buy', 'sell'], description: 'Swap type (required)' },
-                            amount: { type: 'number', description: 'Amount to swap (required)' },
-                            amountIsInSol: { type: 'boolean', description: 'Is the amount in SOL? (required)' },
-                            userWalletAddress: { type: 'string', description: 'User wallet address (required)' },
-                            briberyAmount: { type: 'number', description: 'Optional: Jito tip' },
-                            priorityFee: { type: 'number', description: 'Optional: priority fee in SOL' },
-                            slippage: { type: 'number', description: 'Slippage tolerance (required)' },
-                            computeUnitPrice: { type: 'number', description: 'Optional: calculated if priorityFee is given' },
-                            devMode: { type: 'boolean', description: 'Optional: dev mode flag' }
-                          },
-                          required: ['pairAddress', 'mintAddress', 'type', 'amount', 'amountIsInSol', 'userWalletAddress', 'slippage']
-                        }
-                      },
-                      required: ['params']
-                    },
-                    rpcUrl: { type: 'string', description: 'The Solana RPC endpoint to use (required)' }
-                  },
-                  required: ['transactionDetails', 'rpcUrl']
-                }
-              }
-            }
-          },
-          responses: {
-            '200': {
-              description: 'Unsigned transactions or error',
-              content: {
-                'application/json': {
-                  schema: {
-                    type: 'object',
-                    properties: {
-                      success: { type: 'boolean' },
-                      transactions: { type: 'array', items: { type: 'string', description: 'Base64-encoded unsigned transaction' } },
-                      txCount: { type: 'integer', description: 'Number of transactions to sign and send' },
-                      swapInstructions: { type: 'array', items: { type: 'object' } },
-                      cleanupInstructions: { type: 'array', items: { type: 'object' } },
-                      feeAmountLamports: { type: 'string' },
-                      poolAddress: { type: 'string' },
-                      error: { type: 'string', nullable: true }
-                    }
-                  }
-                }
-              }
-            }
-          }
+// Basic route
+app.get('/', (req, res) => {
+    res.json({ 
+        message: 'Swap Server API',
+        version: process.env.npm_package_version || '1.0.0',
+        endpoints: {
+            health: 'GET /health',
+            swap: 'POST /swap'
         }
-      }
-    }
-  });
+    });
 });
 
-app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
-  console.error(err.stack);
-  res.status(500).json({ success: false, error: 'Internal Server Error' });
+// Error handling middleware
+app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+    console.error('Unhandled error:', err);
+    res.status(500).json({
+        success: false,
+        error: 'Internal server error',
+        timestamp: new Date().toISOString()
+    });
+});
+
+// 404 handler
+app.use((req, res) => {
+    res.status(404).json({
+        success: false,
+        error: 'Endpoint not found',
+        path: req.path,
+        method: req.method
+    });
 });
 
 app.listen(PORT, () => {
-  console.log(`Server listening on port ${PORT}`);
+    console.log(`Server running on port ${PORT}`);
+    console.log(`Health endpoint: http://localhost:${PORT}/health`);
+    console.log(`Swap endpoint: http://localhost:${PORT}/swap`);
 });

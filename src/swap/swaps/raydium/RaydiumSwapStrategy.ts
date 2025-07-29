@@ -8,7 +8,7 @@ import { calculateSendyFee, makeSendyFeeInstruction, makeAstralaneTipInstruction
 import { addWsolUnwrapInstructionIfNeeded, addCloseTokenAccountInstructionIfSellAll } from '../../../utils/tokenAccounts';
 import { SENDY_FEE_ACCOUNT } from '../../constants';
 import { LAMPORTS_PER_SOL } from '@solana/web3.js';
-import axios from 'axios';
+import { proxyAxios } from '../../../utils/proxyAxios';
 import { VersionedTransaction } from '@solana/web3.js';
 import { getAssociatedTokenAddress, createCloseAccountInstruction } from '@solana/spl-token';
 import { TransactionMessage, MessageV0 } from '@solana/web3.js';
@@ -251,7 +251,7 @@ export class RaydiumSwapStrategy implements ISwapStrategy {
             // 2. Get quote from Raydium API
             const quoteUrl = `https://transaction-v1.raydium.io/compute/swap-base-in?inputMint=${inputMint}&outputMint=${outputMint}&amount=${amountInBaseUnits}&slippageBps=${slippageBps}&txVersion=${txVersion}`;
             console.log('[Raydium API] GET', quoteUrl);
-            const { data: swapResponse } = await axios.get(quoteUrl);
+            const { data: swapResponse } = await proxyAxios.get(quoteUrl);
             if (!swapResponse || !swapResponse.data) {
                 return { success: false, error: 'Failed to get quote from Raydium API.' };
             }
@@ -262,7 +262,7 @@ export class RaydiumSwapStrategy implements ISwapStrategy {
             // 3. Get recommended priority fee (optional, fallback to 1000)
             let computeUnitPriceMicroLamports = '1000';
             try {
-                const { data } = await axios.get('https://transaction-v1.raydium.io/priority-fee');
+                const { data } = await proxyAxios.get('https://transaction-v1.raydium.io/priority-fee');
                 if (data && data.data && data.data.default && data.data.default.h) {
                     computeUnitPriceMicroLamports = String(data.data.default.h);
                 }
@@ -292,7 +292,7 @@ export class RaydiumSwapStrategy implements ISwapStrategy {
                 txBuildBody.outputAccount = ata.toBase58();
             }
             console.log('[Raydium API] POST', txBuildUrl, txBuildBody);
-            const { data: swapTransactions } = await axios.post(txBuildUrl, txBuildBody);
+            const { data: swapTransactions } = await proxyAxios.post(txBuildUrl, txBuildBody);
             if (!swapTransactions || !swapTransactions.data || !swapTransactions.data[0] || !swapTransactions.data[0].transaction) {
                 return { success: false, error: 'Failed to get transaction from Raydium API.' };
             }

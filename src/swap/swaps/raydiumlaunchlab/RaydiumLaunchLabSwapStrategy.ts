@@ -23,6 +23,7 @@ import { ensureUserTokenAccounts } from '../utils/ensureTokenAccounts';
 import { LaunchpadPool } from '@raydium-io/raydium-sdk-v2';
 import { addWsolUnwrapInstructionIfNeeded } from "../../../utils/tokenAccounts";
 import { makeAstralaneTipInstruction } from "../../../utils/feeUtils";
+import { fetchWithRetry } from "../../utils/fetchWithRetry";
 
 // If needed, can use the hardcoded value as fallback
 // const LAUNCHPAD_PROGRAM_ID = new PublicKey("LanMkFSVSncjWqWAM8MUHenZzt9xTcT3DcAp949ZwbF");
@@ -81,7 +82,7 @@ export class RaydiumLaunchLabSwapStrategy implements ISwapStrategy {
       const apiUrl = `https://launch-mint-v1.raydium.io/get/by/mints?ids=${mintAddressStr}`;
       try {
         console.log(`RaydiumLaunchLabSwapStrategy: Checking bonding status via ${apiUrl}`);
-        const response = await fetch(apiUrl);
+        const response = await fetchWithRetry(apiUrl);
         if (!response.ok) {
             console.warn(`RaydiumLaunchLabSwapStrategy: API check failed (${response.status}) for ${mintAddressStr}.`);
             return false;
