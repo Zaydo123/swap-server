@@ -113,6 +113,8 @@ export class RaydiumSwapStrategy implements ISwapStrategy {
         // Check Raydium Launchpad API for token status
         // If it's bonded: true or finishingRate: 100, RaydiumSwapStrategy should try to handle it.
         const launchpadApiUrl = `https://launch-mint-v1.raydium.io/get/by/mints?ids=${tokenMint}`;
+        let isKnownGraduated = false; // Track if this is a known graduated token
+        
         try {
             console.log(`RaydiumSwapStrategy: Checking Launchpad API status for ${tokenMint} via ${launchpadApiUrl}`);
             const raydium = await Raydium.load({ // Ensure Raydium SDK is loaded for this check
@@ -131,6 +133,7 @@ export class RaydiumSwapStrategy implements ISwapStrategy {
                     
                     if (isBonded || isFinishingRateComplete) {
                         console.log(`RaydiumSwapStrategy: Token ${tokenMint} appears graduated on Launchpad API (bonded: ${row.bonded}, finishingRate: ${row.finishingRate}).`);
+                        isKnownGraduated = true; // Mark as known graduated token
                         
                         // Priority 1: Check migrateAmmId if present
                         if (row.migrateAmmId) {
@@ -159,6 +162,7 @@ export class RaydiumSwapStrategy implements ISwapStrategy {
                                 console.warn(`RaydiumSwapStrategy: Failed to verify specific poolId ${row.poolId} from Launchpad API:`, specificPoolError, ". Falling back to broader search.");
                             }
                         }
+                        
                         // If specific poolId checks fail or no IDs, fall through to broader SDK check below
                         console.log(`RaydiumSwapStrategy: Proceeding to broader SDK pool check for graduated token ${tokenMint}.`);
                     } else {
@@ -197,6 +201,11 @@ export class RaydiumSwapStrategy implements ISwapStrategy {
                  console.log(`RaydiumStrategy: Standard Raydium pool found for ${tokenMint}. CAN handle.`);
                  return true;
             } else {
+                // Check if this was a known graduated token from earlier logic
+                if (typeof isKnownGraduated !== 'undefined' && isKnownGraduated) {
+                    console.log(`RaydiumStrategy: No pool found via SDK, but token ${tokenMint} is known graduated from LaunchLab. Allowing optimistic handling.`);
+                    return true; // Be permissive for graduated tokens
+                }
                 console.log(`RaydiumStrategy: No standard Raydium pool found for ${tokenMint} via SDK. Rejecting.`);
                 return false;
             }
